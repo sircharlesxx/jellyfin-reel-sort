@@ -14,6 +14,7 @@ flowchart LR
     Downloads -->|sorter.py + guessit| Parser{TV or Movie?}
     Parser -->|Shows| TVDir["Shows/{Title}/Season XX/"]
     Parser -->|Movies| MovieDir["Movies/{Title} ({Year})/"]
+    Parser -.->|Optional Cleanup| Cleanup[delete / move / none]
 ```
 
 1. **`putsync.sh` (Sync Orchestrator)**:
@@ -22,15 +23,19 @@ flowchart LR
    - Logs execution progress and timestamps.
    - Automatically executes `sorter.py` immediately after transfer completion.
 
-2. **`sorter.py` (Parser & Hardlinker)**:
+2. **`sorter.py` (Parser, Hardlinker & Source Cleanup)**:
    - Recursively traverses `DOWNLOADS_DIR` searching for video containers (`.mkv`, `.mp4`, `.avi`).
    - Uses [guessit](https://github.com/guessit-io/guessit) to extract show title, season/episode numbers, movie title, and release year.
    - **TV Shows**: Formats into `Shows/<Show Name>/Season <XX>/<Show Name> - S<XX>E<YY>.<ext>`.
    - **Movies**: Formats into `Movies/<Movie Name> (<Year>)/<Movie Name> (<Year>).<ext>`.
    - Uses `os.link` to create **hardlinks** rather than moving or copying files:
      - Zero extra disk storage consumed.
-     - Leaves original files intact in downloads for continued seeding/tracking.
+     - Leaves original files intact in downloads for continued seeding/tracking (or optionally removes/archives them).
      - Automatically skips files if the destination hardlink already exists.
+   - **Configurable Source Cleanup (`CLEANUP_MODE`)**:
+     - `none` *(default)*: Keeps download source file intact (best for torrent seeding).
+     - `delete`: Deletes source file after hardlink is created.
+     - `move`: Moves source file to an archive folder (`ARCHIVE_DIR`).
 
 ---
 
@@ -46,9 +51,10 @@ cd jellyfin-reel-sort
 
 The installer will:
 1. Verify / install `guessit` and check `rclone`.
-2. Interactively prompt you for your custom storage paths:
+2. Interactively prompt you for your custom storage paths and preferences:
    - Downloads / ingest staging directory
    - Jellyfin media library directory
+   - Cleanup mode (`none`, `delete`, or `move`)
    - Rclone remote name (e.g. `put.io`)
    - Destination installation directory (`~/.local/bin`)
 3. Write your custom configuration file (`~/.config/jellyfin-reel-sort.conf`).
@@ -62,7 +68,7 @@ The installer will:
 jellyfin-reel-sort/
 ├── install.sh          # Interactive automated installer
 ├── putsync.sh          # Orchestration script with flock and rclone copy
-├── sorter.py           # Media parsing and hardlink sorting engine
+├── sorter.py           # Media parsing, hardlink sorting & cleanup engine
 └── README.md           # Documentation
 ```
 

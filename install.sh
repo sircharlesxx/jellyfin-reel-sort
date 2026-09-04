@@ -64,17 +64,31 @@ DEFAULT_MEDIA="$HOME/Jellyfin/media"
 INPUT_MEDIA=$(prompt_with_default "Enter Jellyfin Media Root Directory" "$DEFAULT_MEDIA")
 MEDIA_DIR="${INPUT_MEDIA/#\~/$HOME}"
 
-# 3. Rclone Remote Name
+# 3. Post-Sort Source Cleanup Mode
+DEFAULT_CLEANUP="none"
+echo ""
+echo "Source cleanup mode after linking (options: 'none' [safe for seeding], 'delete' [remove source], 'move' [archive source]):"
+INPUT_CLEANUP=$(prompt_with_default "Enter cleanup mode (none/delete/move)" "$DEFAULT_CLEANUP")
+CLEANUP_MODE="$INPUT_CLEANUP"
+
+ARCHIVE_DIR=""
+if [ "$CLEANUP_MODE" = "move" ]; then
+    DEFAULT_ARCHIVE="$HOME/Jellyfin/processed"
+    INPUT_ARCHIVE=$(prompt_with_default "Enter archive directory for processed files" "$DEFAULT_ARCHIVE")
+    ARCHIVE_DIR="${INPUT_ARCHIVE/#\~/$HOME}"
+fi
+
+# 4. Rclone Remote Name
 DEFAULT_REMOTE="put.io"
 INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io" "$DEFAULT_REMOTE")
 REMOTE_NAME="$INPUT_REMOTE"
 
-# 4. Installation Directory for scripts
+# 5. Installation Directory for scripts
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 INPUT_INSTALL_DIR=$(prompt_with_default "Enter directory to install executable scripts" "$DEFAULT_INSTALL_DIR")
 INSTALL_DIR="${INPUT_INSTALL_DIR/#\~/$HOME}"
 
-# 5. Config file destination
+# 6. Config file destination
 if [ "$EUID" -eq 0 ]; then
     DEFAULT_CONF="/etc/jellyfin-reel-sort.conf"
 else
@@ -87,6 +101,8 @@ echo ""
 echo "[+] Target settings confirmed:"
 echo "  - Ingest Downloads: $DOWNLOADS_DIR"
 echo "  - Media Library:    $MEDIA_DIR"
+echo "  - Cleanup Mode:     $CLEANUP_MODE"
+[ -n "$ARCHIVE_DIR" ] && echo "  - Archive Folder:   $ARCHIVE_DIR"
 echo "  - Rclone Remote:    $REMOTE_NAME"
 echo "  - Install Scripts:  $INSTALL_DIR"
 echo "  - Config File:      $CONF_PATH"
@@ -96,6 +112,7 @@ echo "[+] Preparing directories..."
 mkdir -p "$DOWNLOADS_DIR"
 mkdir -p "$MEDIA_DIR/Shows"
 mkdir -p "$MEDIA_DIR/Movies"
+[ -n "$ARCHIVE_DIR" ] && mkdir -p "$ARCHIVE_DIR"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$(dirname "$CONF_PATH")"
 
@@ -105,6 +122,8 @@ cat << CONF_EOF > "$CONF_PATH"
 # jellyfin-reel-sort configuration
 DOWNLOADS_DIR="$DOWNLOADS_DIR/"
 MEDIA_DIR="$MEDIA_DIR/"
+CLEANUP_MODE="$CLEANUP_MODE"
+ARCHIVE_DIR="$ARCHIVE_DIR"
 REMOTE_NAME="$REMOTE_NAME"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"

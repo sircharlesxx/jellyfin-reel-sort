@@ -1,16 +1,44 @@
 import os
+import sys
 import shutil
 from guessit import guessit
 
-# --- Configuration ---
-DOWNLOADS_DIR = '/volume1/home/<YOUR_USER_NAME>/Jellyfin/downloads/'
-MEDIA_DIR = '/volume1/home/<YOUR_USER_NAME>/Jellyfin/media/'
+# Defaults that can be overridden via environment variables or config file
+CONFIG_PATH = os.environ.get("JELLYFIN_SORT_CONFIG", "/etc/jellyfin-reel-sort.conf")
 
-# Cleanup options: 'delete', 'move', or 'none'
-CLEANUP_MODE = 'delete'  # Change to 'move' or 'none' as needed
+DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "")
+MEDIA_DIR = os.environ.get("MEDIA_DIR", "")
+CLEANUP_MODE = os.environ.get("CLEANUP_MODE", "")  # 'delete', 'move', or 'none'
+ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "")
 
-# Only used if CLEANUP_MODE == 'move'
-ARCHIVE_DIR = '/volume1/home/<YOUR_USER_NAME>/Jellyfin/processed/'
+def load_config():
+    global DOWNLOADS_DIR, MEDIA_DIR, CLEANUP_MODE, ARCHIVE_DIR
+    if os.path.isfile(CONFIG_PATH):
+        with open(CONFIG_PATH, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key == "DOWNLOADS_DIR" and not DOWNLOADS_DIR:
+                        DOWNLOADS_DIR = val
+                    elif key == "MEDIA_DIR" and not MEDIA_DIR:
+                        MEDIA_DIR = val
+                    elif key == "CLEANUP_MODE" and not CLEANUP_MODE:
+                        CLEANUP_MODE = val
+                    elif key == "ARCHIVE_DIR" and not ARCHIVE_DIR:
+                        ARCHIVE_DIR = val
+
+    # Fallback defaults if not set in config or environment
+    if not DOWNLOADS_DIR:
+        DOWNLOADS_DIR = os.path.expanduser("~/Jellyfin/downloads/")
+    if not MEDIA_DIR:
+        MEDIA_DIR = os.path.expanduser("~/Jellyfin/media/")
+    if not CLEANUP_MODE:
+        CLEANUP_MODE = "none"
+    if not ARCHIVE_DIR:
+        ARCHIVE_DIR = os.path.expanduser("~/Jellyfin/processed/")
 
 def cleanup_source(source_path):
     """Safely remove or archive the source file after successful linking."""
@@ -29,9 +57,22 @@ def cleanup_source(source_path):
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
             
-    # If 'none', do nothing
+    # If 'none', do nothing (preserves original file for seeding)
 
 def process_files():
+    load_config()
+    print(f"Scanning downloads directory: {DOWNLOADS_DIR}")
+    print(f"Target media directory: {MEDIA_DIR}")
+    print(f"Cleanup mode: {CLEANUP_MODE}")
+    if CLEANUP_MODE == 'move':
+        print(f"Archive directory: {ARCHIVE_DIR}")
+
+    if not os.path.exists(DOWNLOADS_DIR):
+        print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
+        return
+
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+
     for root, dirs, files in os.walk(DOWNLOADS_DIR):
         for file in files:
             if file.endswith(('.mkv', '.mp4', '.avi')):
@@ -41,11 +82,17 @@ def process_files():
                 # --- HANDLE TV SHOWS ---
                 if 'title' in info and 'season' in info and 'episode' in info:
                     show_name = str(info['title']).title()
+                    
+                    # Handle multi-episodes safely
                     s_num = info['season'][0] if isinstance(info['season'], list) else info['season']
                     e_num = info['episode'][0] if isinstance(info['episode'], list) else info['episode']
+                    
                     season_folder = f"Season {s_num:02d}"
                     ext = os.path.splitext(file)[1]
+                    
+                    # Create clean file name: "Show Name - S01E02.mkv"
                     clean_name = f"{show_name} - S{s_num:02d}E{e_num:02d}{ext}"
+                    
                     dest_dir = os.path.join(MEDIA_DIR, 'Shows', show_name, season_folder)
                     dest_path = os.path.join(dest_dir, clean_name)
                     
@@ -54,7 +101,7 @@ def process_files():
                         try:
                             os.link(source_path, dest_path)
                             print(f"Linked Show: {clean_name}")
-                            cleanup_source(source_path)  # <-- CLEANUP HERE
+                            cleanup_source(source_path)
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
 
@@ -62,9 +109,12 @@ def process_files():
                 elif 'title' in info and info.get('type') == 'movie':
                     movie_name = str(info['title']).title()
                     year = info.get('year', '')
+                    
+                    # Create clean folder/file name: "Movie Name (2023)"
                     folder_name = f"{movie_name} ({year})" if year else movie_name
                     ext = os.path.splitext(file)[1]
                     clean_name = f"{folder_name}{ext}"
+                    
                     dest_dir = os.path.join(MEDIA_DIR, 'Movies', folder_name)
                     dest_path = os.path.join(dest_dir, clean_name)
                     
@@ -73,7 +123,7 @@ def process_files():
                         try:
                             os.link(source_path, dest_path)
                             print(f"Linked Movie: {clean_name}")
-                            cleanup_source(source_path)  # <-- CLEANUP HERE
+                            cleanup_source(source_path)
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
                 else:
