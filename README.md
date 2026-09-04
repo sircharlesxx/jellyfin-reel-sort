@@ -1,8 +1,8 @@
 # jellyfin-reel-sort
 
-Automated synchronization and media organizing pipeline for Jellyfin libraries.
+Automated synchronization, media organizing, and post-processing pipeline for Jellyfin libraries.
 
-`jellyfin-reel-sort` provides an automated, lock-protected workflow to ingest downloads from a remote service (such as Put.io via `rclone`), parse media filenames, and organize them into standardized Jellyfin-compatible directory structures using **hardlinks** (preserving disk space and original download paths).
+`jellyfin-reel-sort` provides an automated, lock-protected workflow to ingest downloads from a remote service (such as Put.io via `rclone`), parse media filenames, organize them into standardized Jellyfin-compatible directory structures using **hardlinks** (preserving disk space and original download paths), and handle optional post-sort cleanup.
 
 ---
 
@@ -14,34 +14,37 @@ flowchart LR
     Downloads -->|sorter.py + guessit| Parser{TV or Movie?}
     Parser -->|Shows| TVDir["Shows/{Title}/Season XX/"]
     Parser -->|Movies| MovieDir["Movies/{Title} ({Year})/"]
-    Parser -.->|Optional Cleanup| Cleanup[delete / move / none]
+    Parser -.->|Post-Sort Cleanup| Cleanup{"CLEANUP_MODE"}
+    Cleanup -->|none| Seeding[Keep intact for seeding]
+    Cleanup -->|delete| Remove[Delete source file]
+    Cleanup -->|move| Archive["Archive Folder (processed/)"]
 ```
 
 1. **`putsync.sh` (Sync Orchestrator)**:
-   - Uses `flock` on a lockfile to prevent overlapping runs.
+   - Uses `flock` on a lockfile to prevent overlapping or concurrent runs.
    - Triggers `rclone copy` from remote (`put.io:/`) to the local staging folder (`DOWNLOADS_DIR`).
-   - Logs execution progress and timestamps.
+   - Logs execution progress and timestamps to the configured log file.
    - Automatically executes `sorter.py` immediately after transfer completion.
 
-2. **`sorter.py` (Parser, Hardlinker & Source Cleanup)**:
+2. **`sorter.py` (Parser, Hardlinker & Source Cleanup Engine)**:
    - Recursively traverses `DOWNLOADS_DIR` searching for video containers (`.mkv`, `.mp4`, `.avi`).
    - Uses [guessit](https://github.com/guessit-io/guessit) to extract show title, season/episode numbers, movie title, and release year.
    - **TV Shows**: Formats into `Shows/<Show Name>/Season <XX>/<Show Name> - S<XX>E<YY>.<ext>`.
    - **Movies**: Formats into `Movies/<Movie Name> (<Year>)/<Movie Name> (<Year>).<ext>`.
    - Uses `os.link` to create **hardlinks** rather than moving or copying files:
      - Zero extra disk storage consumed.
-     - Leaves original files intact in downloads for continued seeding/tracking (or optionally removes/archives them).
      - Automatically skips files if the destination hardlink already exists.
    - **Configurable Source Cleanup (`CLEANUP_MODE`)**:
-     - `none` *(default)*: Keeps download source file intact (best for torrent seeding).
-     - `delete`: Deletes source file after hardlink is created.
-     - `move`: Moves source file to an archive folder (`ARCHIVE_DIR`).
+     - `none` *(default)*: Keeps download source file intact (best for continuous torrent seeding/ratio).
+     - `delete`: Deletes source file after hardlink is verified and created.
+     - `move`: Moves source file to a separate archive directory (`ARCHIVE_DIR`).
+   - Logs any skipped files that do not match recognizable movie or show patterns.
 
 ---
 
 ## Quick Installation
 
-Run the interactive installer script:
+Run the interactive automated installer script:
 
 ```bash
 git clone https://github.com/sircharlesxx/jellyfin-reel-sort.git
@@ -50,13 +53,14 @@ cd jellyfin-reel-sort
 ```
 
 The installer will:
-1. Verify / install `guessit` and check `rclone`.
+1. Verify / install `guessit` and check for `rclone`.
 2. Interactively prompt you for your custom storage paths and preferences:
    - Downloads / ingest staging directory
    - Jellyfin media library directory
-   - Cleanup mode (`none`, `delete`, or `move`)
+   - Post-sort cleanup mode (`none`, `delete`, or `move`)
+   - Archive directory (if `move` is chosen)
    - Rclone remote name (e.g. `put.io`)
-   - Destination installation directory (`~/.local/bin`)
+   - Destination installation directory (default: `~/.local/bin`)
 3. Write your custom configuration file (`~/.config/jellyfin-reel-sort.conf`).
 4. Install executable scripts to your specified path.
 
@@ -69,8 +73,26 @@ jellyfin-reel-sort/
 ├── install.sh          # Interactive automated installer
 ├── putsync.sh          # Orchestration script with flock and rclone copy
 ├── sorter.py           # Media parsing, hardlink sorting & cleanup engine
+├── .gitignore          # Ignores bytecode and cache files
 └── README.md           # Documentation
 ```
+
+---
+
+## Configuration Reference
+
+All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via environment variables):
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `DOWNLOADS_DIR` | Ingest folder where downloads arrive | `~/Jellyfin/downloads/` |
+| `MEDIA_DIR` | Base Jellyfin library folder containing `Shows/` and `Movies/` | `~/Jellyfin/media/` |
+| `CLEANUP_MODE` | Post-linking source handling (`none`, `delete`, `move`) | `none` |
+| `ARCHIVE_DIR` | Destination folder when `CLEANUP_MODE="move"` | `~/Jellyfin/processed/` |
+| `REMOTE_NAME` | Rclone remote name configured for your cloud storage | `put.io` |
+| `LOG_FILE` | Log output file for transfers and sorting | `~/.local/state/jellyfin-reel-sort/sync.log` |
+| `LOCK_FILE` | Lockfile used by `flock` to prevent collisions | `/tmp/jellyfin_reel_sort.lock` |
+| `SORTER_PATH` | Path to executable `sorter.py` | Installed script path |
 
 ---
 
@@ -80,7 +102,7 @@ jellyfin-reel-sort/
 ```bash
 ~/.local/bin/putsync.sh
 ```
-Or run the hardlink sorter directly:
+Or run the hardlink sorter independently:
 ```bash
 python3 ~/.local/bin/sorter.py
 ```
@@ -92,3 +114,10 @@ To run every 30 minutes automatically, add this entry to `crontab -e`:
 */30 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
 ```
 *(The built-in `flock` ensures subsequent executions exit safely if a transfer is still ongoing).*
+
+---
+
+## Contributors & Acknowledgements
+
+- **Charles Peters** ([@sircharlesxx](https://github.com/sircharlesxx)) - Project Creator & Maintainer
+- **Kyle Keller** ([@kellerk563](https://github.com/kellerk563)) - Core Contributor: Designed and implemented the source cleanup pipeline (`delete` / `move` archival workflow) to manage extra and unwanted download files, along with unrecognized media pattern detection.
