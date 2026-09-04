@@ -1,38 +1,47 @@
 #!/bin/bash
 
-# --- Configuration ---
-REMOTE_NAME="put.io"
-# CHANGED: Dedicated drop zone for rclone, separate from the Jellyfin library
-LOCAL_PATH="/home/mariofishy/Jellyfin/downloads/" 
-LOG_FILE="/var/log/rclone_putio_copy.log"
+# Configuration file support
+CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-/etc/jellyfin-reel-sort.conf}"
 
-# Define the path for our lock file. /tmp is a good location.
-LOCK_FILE="/tmp/rclone_putio.lock"
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
 
-# prevent script from running more than one times
-# in case the previous run didnt finish yet
+REMOTE_NAME="${REMOTE_NAME:-put.io}"
+LOCAL_PATH="${DOWNLOADS_DIR:-$HOME/Jellyfin/downloads/}"
+LOG_FILE="${LOG_FILE:-/var/log/rclone_putio_copy.log}"
+LOCK_FILE="${LOCK_FILE:-/tmp/rclone_putio.lock}"
+SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+
+# Ensure log dir exists if writable
+LOG_DIR="$(dirname "$LOG_FILE")"
+if [ ! -d "$LOG_DIR" ] && [ -w "$(dirname "$LOG_DIR")" ]; then
+    mkdir -p "$LOG_DIR"
+fi
+
+# Prevent script from running more than once concurrently
 (
   flock -n 200 || exit 1
 
-  # --- The Sync Command ---
-  # This part will only run if the lock was successfully acquired.
-
   echo "--- Starting put.io copy job at $(date) ---" >> "$LOG_FILE"
 
-  /usr/bin/rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
-    --progress \
-    --log-file="$LOG_FILE"
-    
+  if command -v rclone >/dev/null 2>&1; then
+    rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
+      --progress \
+      --log-file="$LOG_FILE"
+  else
+    echo "Warning: rclone not found in PATH. Skipping remote copy." >> "$LOG_FILE"
+  fi
+
   echo "--- Copy job finished at $(date) ---" >> "$LOG_FILE"
   echo "" >> "$LOG_FILE"
 
-# ... (your existing rclone copy command) ...
-  
   echo "--- Starting blind sort and hardlink at $(date) ---" >> "$LOG_FILE"
-  
-  # RUN THE SORTER 
-  python3 /home/mariofishy/Jellyfin/sorter.py >> "$LOG_FILE" 2>&1
-  
+
+  # Run python sorter
+  python3 "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
+
   echo "--- Copy and Sort jobs finished at $(date) ---" >> "$LOG_FILE"
   echo "" >> "$LOG_FILE"
 

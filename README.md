@@ -17,9 +17,9 @@ flowchart LR
 ```
 
 1. **`putsync.sh` (Sync Orchestrator)**:
-   - Uses `flock` on `/tmp/rclone_putio.lock` to prevent overlapping runs.
-   - Triggers `rclone copy` from remote (`put.io:/`) to the local staging folder (`LOCAL_PATH`).
-   - Logs execution progress and timestamps to `/var/log/rclone_putio_copy.log`.
+   - Uses `flock` on a lockfile to prevent overlapping runs.
+   - Triggers `rclone copy` from remote (`put.io:/`) to the local staging folder (`DOWNLOADS_DIR`).
+   - Logs execution progress and timestamps.
    - Automatically executes `sorter.py` immediately after transfer completion.
 
 2. **`sorter.py` (Parser & Hardlinker)**:
@@ -34,66 +34,55 @@ flowchart LR
 
 ---
 
-## File Structure
+## Quick Installation
+
+Run the interactive installer script:
+
+```bash
+git clone https://github.com/sircharlesxx/jellyfin-reel-sort.git
+cd jellyfin-reel-sort
+./install.sh
+```
+
+The installer will:
+1. Verify / install `guessit` and check `rclone`.
+2. Interactively prompt you for your custom storage paths:
+   - Downloads / ingest staging directory
+   - Jellyfin media library directory
+   - Rclone remote name (e.g. `put.io`)
+   - Destination installation directory (`~/.local/bin`)
+3. Write your custom configuration file (`~/.config/jellyfin-reel-sort.conf`).
+4. Install executable scripts to your specified path.
+
+---
+
+## Project Structure
 
 ```text
 jellyfin-reel-sort/
-├── putsync.sh          # Orchestration script with lockfile and rclone sync
-├── sorter.py           # Media parsing and hardlinking logic
-└── README.md           # Project documentation
+├── install.sh          # Interactive automated installer
+├── putsync.sh          # Orchestration script with flock and rclone copy
+├── sorter.py           # Media parsing and hardlink sorting engine
+└── README.md           # Documentation
 ```
 
 ---
 
-## Requirements
+## Manual Execution & Automation
 
-- **Linux / Unix**
-- **Python 3**
-- Python dependency:
-  ```bash
-  pip install guessit
-  ```
-- **rclone** installed and configured:
-  ```bash
-  rclone config
-  ```
-  *(Configured with a remote named `put.io` or adjusted to your remote name)*
-
----
-
-## Configuration
-
-### 1. File Paths
-Adjust directory paths according to your Jellyfin storage layout:
-
-- In `putsync.sh`:
-  - `REMOTE_NAME`: Remote name configured in rclone (default: `"put.io"`)
-  - `LOCAL_PATH`: Local staging/download folder
-  - `LOG_FILE`: Log output path (default: `/var/log/rclone_putio_copy.log`)
-  - Path to `sorter.py`
-
-- In `sorter.py`:
-  - `DOWNLOADS_DIR`: Path to staging/download directory
-  - `MEDIA_DIR`: Path to base Jellyfin media folder (containing `Shows/` and `Movies/`)
-
----
-
-## Running & Scheduling
-
-### Manual Run
+### Run Manually
 ```bash
-./putsync.sh
+~/.local/bin/putsync.sh
 ```
-
-Or run the sorter independently on existing downloads:
+Or run the hardlink sorter directly:
 ```bash
-python3 sorter.py
+python3 ~/.local/bin/sorter.py
 ```
 
 ### Automation via Cron
-To run the sync and sort job automatically (e.g., every 30 minutes), add an entry to your crontab (`crontab -e`):
+To run every 30 minutes automatically, add this entry to `crontab -e`:
 
 ```cron
-*/30 * * * * /home/tpeters/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
+*/30 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
 ```
-*(The built-in `flock` ensures that if a previous run is still transferring, subsequent jobs exit safely without clashing).*
+*(The built-in `flock` ensures subsequent executions exit safely if a transfer is still ongoing).*

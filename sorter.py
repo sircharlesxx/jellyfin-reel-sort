@@ -1,12 +1,45 @@
 import os
+import sys
+from pathlib import Path
 from guessit import guessit
 
-# The base directories
-DOWNLOADS_DIR = '/home/mariofishy/Jellyfin/downloads/'
-# Note: We dropped 'Shows' from this base path so we can split Movies and Shows automatically
-MEDIA_DIR = '/home/mariofishy/Jellyfin/media/' 
+# Defaults that can be overridden via environment variables or config file
+CONFIG_PATH = os.environ.get("JELLYFIN_SORT_CONFIG", "/etc/jellyfin-reel-sort.conf")
+
+DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "")
+MEDIA_DIR = os.environ.get("MEDIA_DIR", "")
+
+def load_config():
+    global DOWNLOADS_DIR, MEDIA_DIR
+    if os.path.isfile(CONFIG_PATH):
+        with open(CONFIG_PATH, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    val = val.strip().strip('"').strip("'")
+                    if key.strip() == "DOWNLOADS_DIR" and not DOWNLOADS_DIR:
+                        DOWNLOADS_DIR = val
+                    elif key.strip() == "MEDIA_DIR" and not MEDIA_DIR:
+                        MEDIA_DIR = val
+
+    # Fallback default if not configured
+    if not DOWNLOADS_DIR:
+        DOWNLOADS_DIR = os.path.expanduser("~/Jellyfin/downloads/")
+    if not MEDIA_DIR:
+        MEDIA_DIR = os.path.expanduser("~/Jellyfin/media/")
 
 def process_files():
+    load_config()
+    print(f"Scanning downloads directory: {DOWNLOADS_DIR}")
+    print(f"Target media directory: {MEDIA_DIR}")
+
+    if not os.path.exists(DOWNLOADS_DIR):
+        print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
+        return
+
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+
     for root, dirs, files in os.walk(DOWNLOADS_DIR):
         for file in files:
             if file.endswith(('.mkv', '.mp4', '.avi')):
