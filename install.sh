@@ -12,20 +12,28 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Check / install guessit
-echo "[+] Checking Python dependency (guessit)..."
+# Check / install Python dependencies (guessit, subliminal)
+echo "[+] Checking Python dependencies (guessit, subliminal)..."
+MISSING_PKGS=()
 if ! python3 -c "import guessit" >/dev/null 2>&1; then
-    echo "[!] 'guessit' module not found. Installing via pip..."
+    MISSING_PKGS+=("guessit")
+fi
+if ! python3 -c "import subliminal" >/dev/null 2>&1; then
+    MISSING_PKGS+=("subliminal")
+fi
+
+if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+    echo "[!] Missing dependencies: ${MISSING_PKGS[*]}. Installing via pip..."
     if command -v pip3 >/dev/null 2>&1; then
-        pip3 install guessit
+        pip3 install "${MISSING_PKGS[@]}"
     elif command -v pip >/dev/null 2>&1; then
-        pip install guessit
+        pip install "${MISSING_PKGS[@]}"
     else
-        echo "[-] Error: Neither pip3 nor pip was found. Please install guessit manually ('pip install guessit')." >&2
+        echo "[-] Error: Neither pip3 nor pip was found. Please install manually: 'pip install ${MISSING_PKGS[*]}'" >&2
         exit 1
     fi
 else
-    echo "[+] guessit is installed."
+    echo "[+] All required Python dependencies are installed."
 fi
 
 # Check rclone
@@ -78,17 +86,30 @@ if [ "$CLEANUP_MODE" = "move" ]; then
     ARCHIVE_DIR="${INPUT_ARCHIVE/#\~/$HOME}"
 fi
 
-# 4. Rclone Remote Name
+# 4. Subtitle Downloading
+DEFAULT_SUBS="true"
+echo ""
+INPUT_SUBS=$(prompt_with_default "Download subtitles automatically? (true/false)" "$DEFAULT_SUBS")
+DOWNLOAD_SUBTITLES="$INPUT_SUBS"
+
+DEFAULT_LANGS="en"
+SUBTITLE_LANGUAGES="en"
+if [ "$DOWNLOAD_SUBTITLES" = "true" ] || [ "$DOWNLOAD_SUBTITLES" = "1" ] || [ "$DOWNLOAD_SUBTITLES" = "yes" ]; then
+    INPUT_LANGS=$(prompt_with_default "Enter subtitle language code(s), comma-separated (e.g. en, es, fr)" "$DEFAULT_LANGS")
+    SUBTITLE_LANGUAGES="$INPUT_LANGS"
+fi
+
+# 5. Rclone Remote Name
 DEFAULT_REMOTE="put.io"
 INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io" "$DEFAULT_REMOTE")
 REMOTE_NAME="$INPUT_REMOTE"
 
-# 5. Installation Directory for scripts
+# 6. Installation Directory for scripts
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 INPUT_INSTALL_DIR=$(prompt_with_default "Enter directory to install executable scripts" "$DEFAULT_INSTALL_DIR")
 INSTALL_DIR="${INPUT_INSTALL_DIR/#\~/$HOME}"
 
-# 6. Config file destination
+# 7. Config file destination
 if [ "$EUID" -eq 0 ]; then
     DEFAULT_CONF="/etc/jellyfin-reel-sort.conf"
 else
@@ -99,13 +120,14 @@ CONF_PATH="${INPUT_CONF/#\~/$HOME}"
 
 echo ""
 echo "[+] Target settings confirmed:"
-echo "  - Ingest Downloads: $DOWNLOADS_DIR"
-echo "  - Media Library:    $MEDIA_DIR"
-echo "  - Cleanup Mode:     $CLEANUP_MODE"
-[ -n "$ARCHIVE_DIR" ] && echo "  - Archive Folder:   $ARCHIVE_DIR"
-echo "  - Rclone Remote:    $REMOTE_NAME"
-echo "  - Install Scripts:  $INSTALL_DIR"
-echo "  - Config File:      $CONF_PATH"
+echo "  - Ingest Downloads:   $DOWNLOADS_DIR"
+echo "  - Media Library:      $MEDIA_DIR"
+echo "  - Cleanup Mode:       $CLEANUP_MODE"
+[ -n "$ARCHIVE_DIR" ] && echo "  - Archive Folder:     $ARCHIVE_DIR"
+echo "  - Subtitle Downloads: $DOWNLOAD_SUBTITLES ($SUBTITLE_LANGUAGES)"
+echo "  - Rclone Remote:      $REMOTE_NAME"
+echo "  - Install Scripts:    $INSTALL_DIR"
+echo "  - Config File:        $CONF_PATH"
 echo ""
 
 echo "[+] Preparing directories..."
@@ -124,6 +146,8 @@ DOWNLOADS_DIR="$DOWNLOADS_DIR/"
 MEDIA_DIR="$MEDIA_DIR/"
 CLEANUP_MODE="$CLEANUP_MODE"
 ARCHIVE_DIR="$ARCHIVE_DIR"
+DOWNLOAD_SUBTITLES="$DOWNLOAD_SUBTITLES"
+SUBTITLE_LANGUAGES="$SUBTITLE_LANGUAGES"
 REMOTE_NAME="$REMOTE_NAME"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"
