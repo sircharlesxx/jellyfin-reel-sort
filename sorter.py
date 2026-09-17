@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import glob
 from guessit import guessit
 
 # Subliminal subtitle downloading imports
@@ -16,13 +17,137 @@ CONFIG_PATH = os.environ.get("JELLYFIN_SORT_CONFIG", "/etc/jellyfin-reel-sort.co
 
 DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "")
 MEDIA_DIR = os.environ.get("MEDIA_DIR", "")
+SHOWS_DIR = os.environ.get("SHOWS_DIR", "")
+MOVIES_DIR = os.environ.get("MOVIES_DIR", "")
 CLEANUP_MODE = os.environ.get("CLEANUP_MODE", "")  # 'delete', 'move', or 'none'
 ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "")
 DOWNLOAD_SUBTITLES = os.environ.get("DOWNLOAD_SUBTITLES", "")  # 'true' or 'false'
 SUBTITLE_LANGUAGES = os.environ.get("SUBTITLE_LANGUAGES", "")  # comma-separated codes, e.g. 'en', 'es'
 
+def discover_directory(candidates, label="directory"):
+    """Check a list of candidate path patterns/strings and return the first existing directory."""
+    for item in candidates:
+        if not item:
+            continue
+        # Expand user and globs (e.g. /volume*/... or /mnt/*)
+        expanded = os.path.expanduser(item)
+        matches = glob.glob(expanded)
+        for match in sorted(matches):
+            if os.path.isdir(match):
+                return os.path.abspath(match)
+    return None
+
+def find_subfolder_ci(parent_dir, target_name):
+    """Case-insensitive search for a subfolder (e.g. 'shows' or 'movies') inside parent_dir."""
+    if not parent_dir or not os.path.isdir(parent_dir):
+        return None
+    try:
+        for entry in os.listdir(parent_dir):
+            full = os.path.join(parent_dir, entry)
+            if os.path.isdir(full) and entry.lower() == target_name.lower():
+                return full
+    except Exception:
+        pass
+    return None
+
+def resolve_paths():
+    """Lazy discovery to dynamically find downloads, media, shows, and movies folders."""
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR
+
+    # 1. Discover DOWNLOADS_DIR if not configured or missing
+    if not DOWNLOADS_DIR or not os.path.isdir(DOWNLOADS_DIR):
+        download_candidates = [
+            DOWNLOADS_DIR,
+            os.path.expanduser("~/Jellyfin/downloads/"),
+            os.path.expanduser("~/downloads/"),
+            os.path.expanduser("~/Downloads/"),
+            "/volume*/home/*/Jellyfin/downloads/",
+            "/volume*/Jellyfin/downloads/",
+            "/volume*/downloads/",
+            "/volume*/Downloads/",
+            "/mnt/*/downloads/",
+            "/media/downloads/",
+            "/data/downloads/",
+            "/downloads/",
+        ]
+        found_dl = discover_directory(download_candidates, "downloads")
+        if found_dl:
+            DOWNLOADS_DIR = found_dl
+        elif not DOWNLOADS_DIR:
+            DOWNLOADS_DIR = os.path.expanduser("~/Jellyfin/downloads/")
+
+    # 2. Discover MEDIA_DIR if not configured or missing
+    if not MEDIA_DIR or not os.path.isdir(MEDIA_DIR):
+        media_candidates = [
+            MEDIA_DIR,
+            os.path.expanduser("~/Jellyfin/media/"),
+            os.path.expanduser("~/media/"),
+            os.path.expanduser("~/Media/"),
+            "/volume*/home/*/Jellyfin/media/",
+            "/volume*/Jellyfin/media/",
+            "/volume*/media/",
+            "/volume*/Media/",
+            "/volume*/video/",
+            "/mnt/*/media/",
+            "/mnt/*/Media/",
+            "/media/",
+            "/data/media/",
+        ]
+        found_media = discover_directory(media_candidates, "media")
+        if found_media:
+            MEDIA_DIR = found_media
+        elif not MEDIA_DIR:
+            MEDIA_DIR = os.path.expanduser("~/Jellyfin/media/")
+
+    # 3. Discover SHOWS_DIR
+    if not SHOWS_DIR or not os.path.isdir(SHOWS_DIR):
+        # First check inside MEDIA_DIR (case-insensitive for 'Shows', 'shows', 'TV Shows', 'TV')
+        for name in ['Shows', 'TV Shows', 'TV', 'Series']:
+            found = find_subfolder_ci(MEDIA_DIR, name)
+            if found:
+                SHOWS_DIR = found
+                break
+
+        # If not found inside MEDIA_DIR, check system-wide candidates
+        if not SHOWS_DIR or not os.path.isdir(SHOWS_DIR):
+            shows_candidates = [
+                SHOWS_DIR,
+                os.path.join(MEDIA_DIR, "Shows"),
+                "/volume*/home/*/Jellyfin/media/Shows/",
+                "/volume*/media/Shows/",
+                "/volume*/media/TV Shows/",
+                "/volume*/video/Shows/",
+                "/mnt/*/media/Shows/",
+                "/mnt/*/Shows/",
+            ]
+            found_shows = discover_directory(shows_candidates, "shows")
+            SHOWS_DIR = found_shows if found_shows else os.path.join(MEDIA_DIR, "Shows")
+
+    # 4. Discover MOVIES_DIR
+    if not MOVIES_DIR or not os.path.isdir(MOVIES_DIR):
+        # First check inside MEDIA_DIR (case-insensitive for 'Movies', 'movies', 'Films')
+        for name in ['Movies', 'Films']:
+            found = find_subfolder_ci(MEDIA_DIR, name)
+            if found:
+                MOVIES_DIR = found
+                break
+
+        # If not found inside MEDIA_DIR, check system-wide candidates
+        if not MOVIES_DIR or not os.path.isdir(MOVIES_DIR):
+            movies_candidates = [
+                MOVIES_DIR,
+                os.path.join(MEDIA_DIR, "Movies"),
+                "/volume*/home/*/Jellyfin/media/Movies/",
+                "/volume*/media/Movies/",
+                "/volume*/video/Movies/",
+                "/mnt/*/media/Movies/",
+                "/mnt/*/Movies/",
+            ]
+            found_movies = discover_directory(movies_candidates, "movies")
+            MOVIES_DIR = found_movies if found_movies else os.path.join(MEDIA_DIR, "Movies")
+
 def load_config():
-    global DOWNLOADS_DIR, MEDIA_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
             for line in f:
@@ -35,6 +160,10 @@ def load_config():
                         DOWNLOADS_DIR = val
                     elif key == "MEDIA_DIR" and not MEDIA_DIR:
                         MEDIA_DIR = val
+                    elif key == "SHOWS_DIR" and not SHOWS_DIR:
+                        SHOWS_DIR = val
+                    elif key == "MOVIES_DIR" and not MOVIES_DIR:
+                        MOVIES_DIR = val
                     elif key == "CLEANUP_MODE" and not CLEANUP_MODE:
                         CLEANUP_MODE = val
                     elif key == "ARCHIVE_DIR" and not ARCHIVE_DIR:
@@ -44,11 +173,10 @@ def load_config():
                     elif key == "SUBTITLE_LANGUAGES" and not SUBTITLE_LANGUAGES:
                         SUBTITLE_LANGUAGES = val
 
-    # Fallback defaults if not set in config or environment
-    if not DOWNLOADS_DIR:
-        DOWNLOADS_DIR = os.path.expanduser("~/Jellyfin/downloads/")
-    if not MEDIA_DIR:
-        MEDIA_DIR = os.path.expanduser("~/Jellyfin/media/")
+    # Run lazy auto-discovery for storage paths
+    resolve_paths()
+
+    # Fallback defaults for remaining settings
     if not CLEANUP_MODE:
         CLEANUP_MODE = "none"
     if not ARCHIVE_DIR:
@@ -156,18 +284,20 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
 
 def process_files():
     load_config()
-    print(f"Scanning downloads directory: {DOWNLOADS_DIR}")
-    print(f"Target media directory: {MEDIA_DIR}")
-    print(f"Cleanup mode: {CLEANUP_MODE}")
+    print(f"[+] Ingest downloads directory: {DOWNLOADS_DIR}")
+    print(f"[+] TV Shows directory:         {SHOWS_DIR}")
+    print(f"[+] Movies directory:           {MOVIES_DIR}")
+    print(f"[+] Cleanup mode:               {CLEANUP_MODE}")
     if CLEANUP_MODE == 'move':
-        print(f"Archive directory: {ARCHIVE_DIR}")
-    print(f"Download subtitles: {DOWNLOAD_SUBTITLES} ({SUBTITLE_LANGUAGES})")
+        print(f"[+] Archive directory:          {ARCHIVE_DIR}")
+    print(f"[+] Download subtitles:         {DOWNLOAD_SUBTITLES} ({SUBTITLE_LANGUAGES})")
 
     if not os.path.exists(DOWNLOADS_DIR):
         print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
         return
 
-    os.makedirs(MEDIA_DIR, exist_ok=True)
+    os.makedirs(SHOWS_DIR, exist_ok=True)
+    os.makedirs(MOVIES_DIR, exist_ok=True)
 
     for root, dirs, files in os.walk(DOWNLOADS_DIR):
         for file in files:
@@ -190,7 +320,7 @@ def process_files():
                     # Create clean file name: "Show Name - S01E02.mkv"
                     clean_name = f"{show_name} - S{s_num:02d}E{e_num:02d}{ext}"
                     
-                    dest_dir = os.path.join(MEDIA_DIR, 'Shows', show_name, season_folder)
+                    dest_dir = os.path.join(SHOWS_DIR, show_name, season_folder)
                     dest_path = os.path.join(dest_dir, clean_name)
                     
                     os.makedirs(dest_dir, exist_ok=True)
@@ -215,7 +345,7 @@ def process_files():
                     ext = os.path.splitext(file)[1]
                     clean_name = f"{folder_name}{ext}"
                     
-                    dest_dir = os.path.join(MEDIA_DIR, 'Movies', folder_name)
+                    dest_dir = os.path.join(MOVIES_DIR, folder_name)
                     dest_path = os.path.join(dest_dir, clean_name)
                     
                     os.makedirs(dest_dir, exist_ok=True)

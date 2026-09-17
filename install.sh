@@ -57,18 +57,36 @@ prompt_with_default() {
     echo "${result:-$default_val}"
 }
 
+# Auto-detect sensible default paths for downloads & media if they exist
+DETECTED_DOWNLOADS=""
+for cand in "$HOME/Jellyfin/downloads" "$HOME/downloads" "$HOME/Downloads" "/volume1/home/$USER/Jellyfin/downloads" "/volume1/downloads" "/media/downloads"; do
+    if [ -d "$cand" ]; then
+        DETECTED_DOWNLOADS="$cand"
+        break
+    fi
+done
+DEFAULT_DOWNLOADS="${DETECTED_DOWNLOADS:-$HOME/Jellyfin/downloads}"
+
+DETECTED_MEDIA=""
+for cand in "$HOME/Jellyfin/media" "$HOME/media" "$HOME/Media" "/volume1/home/$USER/Jellyfin/media" "/volume1/media" "/volume1/video" "/media"; do
+    if [ -d "$cand" ]; then
+        DETECTED_MEDIA="$cand"
+        break
+    fi
+done
+DEFAULT_MEDIA="${DETECTED_MEDIA:-$HOME/Jellyfin/media}"
+
 # --- Interactive Path Prompts ---
 echo "------------------------------------------------"
 echo " Configuration Setup"
+echo " (Press ENTER to accept auto-detected or default values)"
 echo "------------------------------------------------"
 
 # 1. Downloads Staging Directory
-DEFAULT_DOWNLOADS="$HOME/Jellyfin/downloads"
 INPUT_DOWNLOADS=$(prompt_with_default "Enter Downloads / Ingest Staging Directory" "$DEFAULT_DOWNLOADS")
 DOWNLOADS_DIR="${INPUT_DOWNLOADS/#\~/$HOME}"
 
 # 2. Jellyfin Media Root Directory
-DEFAULT_MEDIA="$HOME/Jellyfin/media"
 INPUT_MEDIA=$(prompt_with_default "Enter Jellyfin Media Root Directory" "$DEFAULT_MEDIA")
 MEDIA_DIR="${INPUT_MEDIA/#\~/$HOME}"
 
@@ -144,6 +162,8 @@ cat << CONF_EOF > "$CONF_PATH"
 # jellyfin-reel-sort configuration
 DOWNLOADS_DIR="$DOWNLOADS_DIR/"
 MEDIA_DIR="$MEDIA_DIR/"
+SHOWS_DIR="$MEDIA_DIR/Shows/"
+MOVIES_DIR="$MEDIA_DIR/Movies/"
 CLEANUP_MODE="$CLEANUP_MODE"
 ARCHIVE_DIR="$ARCHIVE_DIR"
 DOWNLOAD_SUBTITLES="$DOWNLOAD_SUBTITLES"

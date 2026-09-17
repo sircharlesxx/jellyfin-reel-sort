@@ -6,14 +6,24 @@ Automated synchronization, media organizing, subtitle downloading, and post-proc
 
 ---
 
+## Dynamic Environment & Lazy Discovery
+
+`jellyfin-reel-sort` includes **smart lazy path discovery** to adapt dynamically across diverse environments (Synology DSM volumes `/volume1/...`, Linux home directories `~/...`, unRAID `/mnt/user/...`, TrueNAS pools, Docker mounts, etc.):
+
+- **Dynamic Download Ingest Discovery**: Auto-detects standard downloads directories across home folders, Synology volumes, mount points, or custom config paths.
+- **Dynamic Media Library Discovery**: Automatically inspects base media folders and locates existing TV shows (`Shows/`, `shows/`, `TV Shows/`, `TV/`, `Series/`) and movies directories (`Movies/`, `movies/`, `Films/`).
+- **Zero Hardcoded Paths**: Runs out-of-the-box in multiple server topologies without requiring code edits.
+
+---
+
 ## Architecture & How It Works
 
 ```mermaid
 flowchart LR
-    PutIO[Put.io / Cloud Remote] -->|rclone copy| Downloads[Downloads Folder]
-    Downloads -->|sorter.py + guessit| Parser{TV or Movie?}
-    Parser -->|Shows| TVDir["Shows/{Title}/Season XX/"]
-    Parser -->|Movies| MovieDir["Movies/{Title} ({Year})/"]
+    PutIO[Put.io / Cloud Remote] -->|rclone copy| Ingest[Ingest / Downloads]
+    Ingest -->|Lazy Path Discovery| Sorter[sorter.py + guessit]
+    Sorter -->|Auto-detected Shows| TVDir["Shows/{Title}/Season XX/"]
+    Sorter -->|Auto-detected Movies| MovieDir["Movies/{Title} ({Year})/"]
     TVDir --> Subs["Download Subtitles (.en.srt)"]
     MovieDir --> Subs
     Subs -.->|Post-Sort Cleanup| Cleanup{"CLEANUP_MODE"}
@@ -29,6 +39,7 @@ flowchart LR
    - Automatically executes `sorter.py` immediately after transfer completion.
 
 2. **`sorter.py` (Parser, Hardlinker, Subtitle Downloader & Cleanup Engine)**:
+   - Evaluates storage targets using lazy discovery or explicit config parameters.
    - Recursively traverses `DOWNLOADS_DIR` searching for video containers (`.mkv`, `.mp4`, `.avi`).
    - Uses [guessit](https://github.com/guessit-io/guessit) to extract show title, season/episode numbers, movie title, and release year.
    - **TV Shows**: Formats into `Shows/<Show Name>/Season <XX>/<Show Name> - S<XX>E<YY>.<ext>`.
@@ -61,7 +72,7 @@ cd jellyfin-reel-sort
 
 The installer will:
 1. Verify / install `guessit` and `subliminal` via `pip`, and check for `rclone`.
-2. Interactively prompt you for your custom storage paths and preferences:
+2. Auto-detect your local paths and prompt you with sensible defaults:
    - Downloads / ingest staging directory
    - Jellyfin media library directory
    - Post-sort cleanup mode (`none`, `delete`, or `move`)
@@ -79,9 +90,9 @@ The installer will:
 
 ```text
 jellyfin-reel-sort/
-├── install.sh          # Interactive automated installer
+├── install.sh          # Interactive automated installer with path auto-detection
 ├── putsync.sh          # Orchestration script with flock and rclone copy
-├── sorter.py           # Media parsing, hardlinker, subtitle downloader & cleanup
+├── sorter.py           # Media parsing, lazy discovery, hardlinker, subtitles & cleanup
 ├── .gitignore          # Ignores bytecode and cache files
 └── README.md           # Documentation
 ```
@@ -90,12 +101,14 @@ jellyfin-reel-sort/
 
 ## Configuration Reference
 
-All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via environment variables):
+All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via environment variables). If omitted, lazy discovery automatically locates them:
 
-| Variable | Description | Default |
+| Variable | Description | Default / Discovery Fallback |
 | :--- | :--- | :--- |
-| `DOWNLOADS_DIR` | Ingest folder where downloads arrive | `~/Jellyfin/downloads/` |
-| `MEDIA_DIR` | Base Jellyfin library folder containing `Shows/` and `Movies/` | `~/Jellyfin/media/` |
+| `DOWNLOADS_DIR` | Ingest folder where downloads arrive | Auto-discovered (or `~/Jellyfin/downloads/`) |
+| `MEDIA_DIR` | Base Jellyfin library folder | Auto-discovered (or `~/Jellyfin/media/`) |
+| `SHOWS_DIR` | Destination directory for TV Shows | Auto-discovered (`Shows/`, `TV/`, etc.) |
+| `MOVIES_DIR` | Destination directory for Movies | Auto-discovered (`Movies/`, `Films/`, etc.) |
 | `CLEANUP_MODE` | Post-linking source handling (`none`, `delete`, `move`) | `none` |
 | `ARCHIVE_DIR` | Destination folder when `CLEANUP_MODE="move"` | `~/Jellyfin/processed/` |
 | `DOWNLOAD_SUBTITLES` | Whether to automatically fetch subtitles (`true` / `false`) | `true` |
