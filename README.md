@@ -12,6 +12,7 @@ Automated synchronization, media organizing, subtitle downloading, and post-proc
 
 - **Dynamic Download Ingest Discovery**: Auto-detects standard downloads directories across home folders, Synology volumes, mount points, or custom config paths.
 - **Dynamic Media Library Discovery**: Automatically inspects base media folders and locates existing TV shows (`Shows/`, `shows/`, `TV Shows/`, `TV/`, `Series/`) and movies directories (`Movies/`, `movies/`, `Films/`).
+- **Resilient Dependency Management**: Automatically handles Debian/Ubuntu/TrueNAS **externally-managed PEP 668 environments** using `apt`, user packages, or dedicated virtual environments.
 - **Zero Hardcoded Paths**: Runs out-of-the-box in multiple server topologies without requiring code edits.
 
 ---
@@ -36,7 +37,7 @@ flowchart LR
    - Uses `flock` on a lockfile to prevent overlapping or concurrent runs.
    - Triggers `rclone copy` from remote (`put.io:/`) to the local staging folder (`DOWNLOADS_DIR`).
    - Logs execution progress and timestamps to the configured log file.
-   - Automatically executes `sorter.py` immediately after transfer completion.
+   - Automatically executes `sorter.py` using the configured or dedicated virtual environment Python interpreter.
 
 2. **`sorter.py` (Parser, Hardlinker, Subtitle Downloader & Cleanup Engine)**:
    - Evaluates storage targets using lazy discovery or explicit config parameters.
@@ -70,19 +71,16 @@ cd jellyfin-reel-sort
 ./install.sh
 ```
 
-The installer will:
-1. Verify / install `guessit` and `subliminal` via `pip`, and check for `rclone`.
-2. Auto-detect your local paths and prompt you with sensible defaults:
-   - Downloads / ingest staging directory
-   - Jellyfin media library directory
-   - Post-sort cleanup mode (`none`, `delete`, or `move`)
-   - Archive directory (if `move` is chosen)
-   - Enable/disable automatic subtitle downloads (`true` / `false`)
-   - Subtitle languages (e.g. `en`, `es`, `fr`)
-   - Rclone remote name (e.g. `put.io`)
-   - Destination installation directory (default: `~/.local/bin`)
-3. Write your custom configuration file (`~/.config/jellyfin-reel-sort.conf`).
-4. Install executable scripts to your specified path.
+### What the installer handles automatically:
+1. **Dependency Resolution**:
+   - Checks for `guessit` and `subliminal`.
+   - If in an **externally-managed Python environment** (Ubuntu/Debian `PEP 668`), it attempts `apt`, falls back to `--break-system-packages`, or creates a dedicated virtual environment at `~/.local/share/jellyfin-reel-sort/venv` so you never run into pip errors.
+2. **Auto-Path Detection**:
+   - Auto-detects local downloads and media folders and sets them as the default options.
+3. **Interactive Configuration**:
+   - Ingest staging folder, Jellyfin media folder, cleanup mode (`none`/`delete`/`move`), subtitle downloading preferences, and rclone remote.
+4. **Configuration & Scripts Deployment**:
+   - Writes `~/.config/jellyfin-reel-sort.conf` and installs `putsync.sh` and `sorter.py` to `~/.local/bin`.
 
 ---
 
@@ -90,9 +88,10 @@ The installer will:
 
 ```text
 jellyfin-reel-sort/
-├── install.sh          # Interactive automated installer with path auto-detection
+├── install.sh          # Interactive automated installer with PEP 668 & apt support
 ├── putsync.sh          # Orchestration script with flock and rclone copy
 ├── sorter.py           # Media parsing, lazy discovery, hardlinker, subtitles & cleanup
+├── requirements.txt    # Python dependencies list
 ├── .gitignore          # Ignores bytecode and cache files
 └── README.md           # Documentation
 ```
@@ -113,6 +112,7 @@ All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via en
 | `ARCHIVE_DIR` | Destination folder when `CLEANUP_MODE="move"` | `~/Jellyfin/processed/` |
 | `DOWNLOAD_SUBTITLES` | Whether to automatically fetch subtitles (`true` / `false`) | `true` |
 | `SUBTITLE_LANGUAGES` | Comma-separated language codes for subtitles | `en` |
+| `PYTHON_BIN` | Python interpreter (points to venv if externally managed) | `python3` or dedicated venv path |
 | `REMOTE_NAME` | Rclone remote name configured for your cloud storage | `put.io` |
 | `LOG_FILE` | Log output file for transfers and sorting | `~/.local/state/jellyfin-reel-sort/sync.log` |
 | `LOCK_FILE` | Lockfile used by `flock` to prevent collisions | `/tmp/jellyfin_reel_sort.lock` |
@@ -145,7 +145,7 @@ Movies/
 ```bash
 ~/.local/bin/putsync.sh
 ```
-Or run the hardlink sorter and subtitle downloader independently:
+Or run the hardlink sorter independently:
 ```bash
 python3 ~/.local/bin/sorter.py
 ```

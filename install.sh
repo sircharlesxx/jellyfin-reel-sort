@@ -9,38 +9,101 @@ echo ""
 # Check python3
 if ! command -v python3 >/dev/null 2>&1; then
     echo "[-] Error: python3 is required but not installed." >&2
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "    Run: sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv"
+    fi
     exit 1
 fi
 
-# Check / install Python dependencies (guessit, subliminal)
-echo "[+] Checking Python dependencies (guessit, subliminal)..."
-MISSING_PKGS=()
-if ! python3 -c "import guessit" >/dev/null 2>&1; then
-    MISSING_PKGS+=("guessit")
-fi
-if ! python3 -c "import subliminal" >/dev/null 2>&1; then
-    MISSING_PKGS+=("subliminal")
-fi
+# Define scripts/environment destination paths early
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_INSTALL_DIR="$HOME/.local/bin"
+VENV_DIR="$HOME/.local/share/jellyfin-reel-sort/venv"
 
-if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
-    echo "[!] Missing dependencies: ${MISSING_PKGS[*]}. Installing via pip..."
-    if command -v pip3 >/dev/null 2>&1; then
-        pip3 install "${MISSING_PKGS[@]}"
-    elif command -v pip >/dev/null 2>&1; then
-        pip install "${MISSING_PKGS[@]}"
+# Helper for sudo commands
+run_sudo() {
+    if [ "$EUID" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
     else
-        echo "[-] Error: Neither pip3 nor pip was found. Please install manually: 'pip install ${MISSING_PKGS[*]}'" >&2
-        exit 1
+        echo "[-] Sudo is required for this operation: $*" >&2
+        return 1
     fi
-else
-    echo "[+] All required Python dependencies are installed."
-fi
+}
+
+# --- Robust Dependency Installer (Handles PEP 668 externally-managed environments, apt, and venv) ---
+install_python_dependencies() {
+    echo "[+] Checking Python dependencies (guessit, subliminal)..."
+
+    # Test if both dependencies already work with system/user python3
+    if python3 -c "import guessit, subliminal" >/dev/null 2>&1; then
+        echo "[+] All required dependencies are already available in python3."
+        PYTHON_BIN="$(command -v python3)"
+        return 0
+    fi
+
+    # 1. Check if apt package manager is available (Ubuntu/Debian)
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "[!] Debian/Ubuntu-based system detected with externally-managed Python."
+        echo "    Attempting to install system packages via apt..."
+        
+        # Try apt install for available packages
+        run_sudo apt-get update -y || true
+        run_sudo apt-get install -y python3-pip python3-venv python3-guessit python3-subliminal || true
+
+        if python3 -c "import guessit, subliminal" >/dev/null 2>&1; then
+            echo "[+] Dependencies successfully resolved via apt."
+            PYTHON_BIN="$(command -v python3)"
+            return 0
+        fi
+    fi
+
+    # 2. Try pip install with --break-system-packages or --user
+    echo "[*] Trying pip with user flags..."
+    if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
+        PIP_CMD="$(command -v pip3 || command -v pip)"
+        if $PIP_CMD install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" >/dev/null 2>&1; then
+            echo "[+] Dependencies installed via pip (--break-system-packages)."
+            PYTHON_BIN="$(command -v python3)"
+            return 0
+        elif $PIP_CMD install --user -r "$SCRIPT_DIR/requirements.txt" >/dev/null 2>&1; then
+            echo "[+] Dependencies installed via pip (--user)."
+            PYTHON_BIN="$(command -v python3)"
+            return 0
+        fi
+    fi
+
+    # 3. Create a clean dedicated virtual environment (the official PEP 668 standard)
+    echo "[*] Externally managed environment detected. Creating dedicated virtual environment..."
+    mkdir -p "$(dirname "$VENV_DIR")"
+    if ! python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            echo "[!] python3-venv package is required. Installing via apt..."
+            run_sudo apt-get install -y python3-venv
+            python3 -m venv "$VENV_DIR"
+        else
+            echo "[-] Error: Failed to create python3 virtual environment at $VENV_DIR." >&2
+            exit 1
+        fi
+    fi
+
+    echo "[+] Installing packages into dedicated venv ($VENV_DIR)..."
+    "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+    "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+    PYTHON_BIN="$VENV_DIR/bin/python3"
+    echo "[+] Virtual environment configured successfully."
+}
+
+install_python_dependencies
 
 # Check rclone
 echo "[+] Checking rclone..."
 if ! command -v rclone >/dev/null 2>&1; then
     echo "[!] Warning: 'rclone' command not found. You will need rclone to use Put.io syncing."
-    echo "    Install rclone with your package manager (e.g. 'sudo apt install rclone' or 'sudo dnf install rclone')."
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "    (You can install it with: sudo apt install rclone)"
+    fi
 fi
 echo ""
 
@@ -123,7 +186,6 @@ INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io" "$DEFAU
 REMOTE_NAME="$INPUT_REMOTE"
 
 # 6. Installation Directory for scripts
-DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 INPUT_INSTALL_DIR=$(prompt_with_default "Enter directory to install executable scripts" "$DEFAULT_INSTALL_DIR")
 INSTALL_DIR="${INPUT_INSTALL_DIR/#\~/$HOME}"
 
@@ -143,6 +205,7 @@ echo "  - Media Library:      $MEDIA_DIR"
 echo "  - Cleanup Mode:       $CLEANUP_MODE"
 [ -n "$ARCHIVE_DIR" ] && echo "  - Archive Folder:     $ARCHIVE_DIR"
 echo "  - Subtitle Downloads: $DOWNLOAD_SUBTITLES ($SUBTITLE_LANGUAGES)"
+echo "  - Python Executable:  $PYTHON_BIN"
 echo "  - Rclone Remote:      $REMOTE_NAME"
 echo "  - Install Scripts:    $INSTALL_DIR"
 echo "  - Config File:        $CONF_PATH"
@@ -168,6 +231,7 @@ CLEANUP_MODE="$CLEANUP_MODE"
 ARCHIVE_DIR="$ARCHIVE_DIR"
 DOWNLOAD_SUBTITLES="$DOWNLOAD_SUBTITLES"
 SUBTITLE_LANGUAGES="$SUBTITLE_LANGUAGES"
+PYTHON_BIN="$PYTHON_BIN"
 REMOTE_NAME="$REMOTE_NAME"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"
@@ -175,7 +239,6 @@ SORTER_PATH="$INSTALL_DIR/sorter.py"
 CONF_EOF
 
 # Copy scripts to INSTALL_DIR
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "[+] Installing scripts into $INSTALL_DIR..."
 cp "$SCRIPT_DIR/sorter.py" "$INSTALL_DIR/sorter.py"
 cp "$SCRIPT_DIR/putsync.sh" "$INSTALL_DIR/putsync.sh"
@@ -192,6 +255,7 @@ echo "================================================"
 echo "Scripts installed:"
 echo "  - Sync & Sort Orchestrator: $INSTALL_DIR/putsync.sh"
 echo "  - Hardlink Sorter:          $INSTALL_DIR/sorter.py"
+echo "  - Python Binary:            $PYTHON_BIN"
 echo "Configuration file:           $CONF_PATH"
 echo ""
 echo "To run manually:"

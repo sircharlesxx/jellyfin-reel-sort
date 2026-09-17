@@ -14,6 +14,15 @@ LOG_FILE="${LOG_FILE:-/var/log/rclone_putio_copy.log}"
 LOCK_FILE="${LOCK_FILE:-/tmp/rclone_putio.lock}"
 SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
 
+# Resolve Python interpreter (prioritizes config/venv)
+if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
+    PY_CMD="$PYTHON_BIN"
+elif [ -x "$HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ]; then
+    PY_CMD="$HOME/.local/share/jellyfin-reel-sort/venv/bin/python3"
+else
+    PY_CMD="$(command -v python3)"
+fi
+
 # Ensure log dir exists if writable
 LOG_DIR="$(dirname "$LOG_FILE")"
 if [ ! -d "$LOG_DIR" ] && [ -w "$(dirname "$LOG_DIR")" ]; then
@@ -39,8 +48,8 @@ fi
 
   echo "--- Starting blind sort and hardlink at $(date) ---" >> "$LOG_FILE"
 
-  # Run python sorter
-  python3 "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
+  # Run python sorter using resolved Python executable
+  "$PY_CMD" "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
 
   echo "--- Copy and Sort jobs finished at $(date) ---" >> "$LOG_FILE"
   echo "" >> "$LOG_FILE"
