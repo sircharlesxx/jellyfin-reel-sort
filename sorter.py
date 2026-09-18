@@ -111,20 +111,33 @@ def get_active_providers():
         # Exclude podnapisi by default since www.podnapisi.net has invalid/dead DNS records
         candidates = [p for p in default_pool if p in available_names and p != 'podnapisi']
 
-    # Pre-flight DNS check: ensure candidate hostnames resolve so requests don't raise 'Name or service not known'
-    active = []
-    for p_name in candidates:
-        try:
-            cls = subliminal.core.provider_manager[p_name].plugin
-            url = getattr(cls, 'server_url', None)
-            if url:
-                host = urlparse(url).hostname
-                if host:
-                    socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
-            active.append(p_name)
-        except Exception:
-            # Skip provider if DNS resolution fails
-            continue
+    # Pre-flight HTTP check: ensure candidate hostnames resolve and respond
+    # to avoid stalling subliminal if a provider (e.g. tvsubtitles) tarpits VPN IPs.
+    import requests
+    import urllib3
+    from requests.adapters import HTTPAdapter
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    # Use a raw session to bypass the global monkey-patch that adds retries
+    with requests.Session() as test_session:
+        # Override the patched adapter with a strict no-retry adapter
+        no_retry_adapter = HTTPAdapter(max_retries=0)
+        test_session.mount("http://", no_retry_adapter)
+        test_session.mount("https://", no_retry_adapter)
+        
+        active = []
+        for p_name in candidates:
+            try:
+                cls = subliminal.core.provider_manager[p_name].plugin
+                url = getattr(cls, 'server_url', None)
+                if url:
+                    # Fast HTTP HEAD check (bypasses SSL cert issues so we just test connectivity)
+                    test_session.head(url, timeout=2.5, verify=False, allow_redirects=True)
+                active.append(p_name)
+            except Exception as e:
+                # Skip provider if DNS resolution or HTTP connection fails
+                print(f"  [!] Provider '{p_name}' unreachable (skipping): {type(e).__name__}")
+                continue
 
     RESOLVED_PROVIDERS = active
     return RESOLVED_PROVIDERS
