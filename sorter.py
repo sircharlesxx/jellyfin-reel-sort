@@ -284,6 +284,7 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
 
     dest_dir = os.path.dirname(dest_path)
     base_stem = os.path.splitext(os.path.basename(dest_path))[0]
+    nosubs_marker = os.path.join(dest_dir, f"{base_stem}.nosubs")
 
     # Parse configured language codes into babelfish Language objects
     languages = set()
@@ -315,11 +316,24 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
             missing_languages.add(lang)
 
     if not missing_languages:
+        # Subtitles exist — remove any stale marker if subs were manually added
+        if os.path.exists(nosubs_marker):
+            try:
+                os.remove(nosubs_marker)
+            except Exception:
+                pass
         print(f"  -> Subtitles already exist for: {base_stem}")
+        return
+
+    # Skip querying if a previous run already verified that no subtitles were found
+    if os.path.exists(nosubs_marker):
+        print(f"  -> Skipping subtitle query (marked .nosubs from previous run): {base_stem}")
         return
 
     print(f"  -> Querying subtitle providers for: {base_stem} [{', '.join(l.alpha2 for l in missing_languages)}]...")
 
+    query_succeeded = False
+    found_any = False
     try:
         # Build Video object using subliminal's scan_video
         video = None
@@ -352,15 +366,33 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
 
         # Download best matching subtitles
         subtitles = download_best_subtitles([video], missing_languages)
+        query_succeeded = True
         if subtitles.get(video):
             saved = save_subtitles(video, subtitles[video], directory=dest_dir, language_format='alpha2')
             for s in saved:
                 print(f"  [✓] Downloaded subtitle: {base_stem}.{s.language.alpha2}.srt")
+                found_any = True
+            if os.path.exists(nosubs_marker):
+                try:
+                    os.remove(nosubs_marker)
+                except Exception:
+                    pass
         else:
             print(f"  [-] No subtitles found from online providers for '{base_stem}'.")
 
     except Exception as e:
         print(f"  [!] Subtitle query encountered error (skipping gracefully): {e}")
+
+    # If the search completed cleanly with 0 subtitles found, write a marker file
+    # so future runs do not repeatedly query providers for missing items
+    if query_succeeded and not found_any:
+        try:
+            import datetime
+            with open(nosubs_marker, "w") as _f:
+                _f.write(f"No subtitles found: {datetime.datetime.now().isoformat()}\n")
+            print(f"  -> Created marker: {os.path.basename(nosubs_marker)}")
+        except Exception:
+            pass
 
     # Rate-limit delay between files to avoid triggering API throttling or HTTP 429
     if SUBTITLE_DELAY > 0:

@@ -51,6 +51,7 @@ flowchart LR
    - **Automatic Subtitle Fetching**:
      - Uses [subliminal](https://github.com/Diaoul/subliminal) to query multiple subtitle providers (OpenSubtitles, Podnapisi, TVsubtitles, Gestdown, etc.).
      - Automatically detects if subtitles already exist beside the video to prevent duplicate downloads.
+     - Creates a `.nosubs` marker when no subtitles are available online, preventing repeated queries on future runs (marker automatically clears if subtitles are later added).
      - Formats subtitles according to Jellyfin naming conventions (e.g. `Show - S01E01.en.srt`, `Movie (2023).en.srt`).
      - Configurable language support (single or multiple languages comma-separated).
    - **Configurable Source Cleanup (`CLEANUP_MODE`)**:
