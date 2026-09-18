@@ -8,7 +8,23 @@ if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
 fi
 
+# Lazy auto-detection for rclone remote if not explicitly specified
+if [ -z "$REMOTE_NAME" ]; then
+    if command -v rclone >/dev/null 2>&1; then
+        # Check if 'put.io' exists, or any remote with 'put' in it, or use the first available remote
+        while IFS= read -r rem; do
+            clean_rem="${rem%:}"
+            if [[ "$clean_rem" =~ [Pp][Uu][Tt] ]]; then
+                REMOTE_NAME="$clean_rem"
+                break
+            elif [ -z "$REMOTE_NAME" ] && [ -n "$clean_rem" ]; then
+                REMOTE_NAME="$clean_rem"
+            fi
+        done < <(rclone listremotes 2>/dev/null || true)
+    fi
+fi
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
+
 LOCAL_PATH="${DOWNLOADS_DIR:-$HOME/Jellyfin/downloads/}"
 LOG_FILE="${LOG_FILE:-/var/log/rclone_putio_copy.log}"
 LOCK_FILE="${LOCK_FILE:-/tmp/rclone_putio.lock}"
@@ -33,7 +49,7 @@ fi
 (
   flock -n 200 || exit 1
 
-  echo "--- Starting put.io copy job at $(date) ---" >> "$LOG_FILE"
+  echo "--- Starting $REMOTE_NAME copy job at $(date) ---" >> "$LOG_FILE"
 
   if command -v rclone >/dev/null 2>&1; then
     rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \

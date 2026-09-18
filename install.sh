@@ -48,7 +48,6 @@ install_python_dependencies() {
         echo "[!] Debian/Ubuntu-based system detected with externally-managed Python."
         echo "    Attempting to install system packages via apt..."
         
-        # Try apt install for available packages
         run_sudo apt-get update -y || true
         run_sudo apt-get install -y python3-pip python3-venv python3-guessit python3-subliminal || true
 
@@ -97,9 +96,33 @@ install_python_dependencies() {
 
 install_python_dependencies
 
-# Check rclone
-echo "[+] Checking rclone..."
-if ! command -v rclone >/dev/null 2>&1; then
+# Auto-detect existing rclone remotes
+RCLONE_REMOTES=()
+DEFAULT_REMOTE="put.io"
+
+if command -v rclone >/dev/null 2>&1; then
+    echo "[+] Checking rclone remotes..."
+    # rclone listremotes outputs remotes with trailing colon (e.g. 'put.io:', 'gdrive:')
+    while IFS= read -r rem; do
+        clean_rem="${rem%:}"
+        if [ -n "$clean_rem" ]; then
+            RCLONE_REMOTES+=("$clean_rem")
+        fi
+    done < <(rclone listremotes 2>/dev/null || true)
+
+    if [ ${#RCLONE_REMOTES[@]} -gt 0 ]; then
+        echo "    Detected configured rclone remotes: ${RCLONE_REMOTES[*]}"
+        # If any remote has 'put' in the name, prioritize it as the default
+        for r in "${RCLONE_REMOTES[@]}"; do
+            if [[ "$r" =~ [Pp][Uu][Tt] ]]; then
+                DEFAULT_REMOTE="$r"
+                break
+            fi
+        done
+        # Otherwise default to the first available remote
+        [ -z "$DEFAULT_REMOTE" ] && DEFAULT_REMOTE="${RCLONE_REMOTES[0]}"
+    fi
+else
     echo "[!] Warning: 'rclone' command not found. You will need rclone to use Put.io syncing."
     if command -v apt-get >/dev/null 2>&1; then
         echo "    (You can install it with: sudo apt install rclone)"
@@ -180,9 +203,9 @@ if [ "$DOWNLOAD_SUBTITLES" = "true" ] || [ "$DOWNLOAD_SUBTITLES" = "1" ] || [ "$
     SUBTITLE_LANGUAGES="$INPUT_LANGS"
 fi
 
-# 5. Rclone Remote Name
-DEFAULT_REMOTE="put.io"
-INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io" "$DEFAULT_REMOTE")
+# 5. Rclone Remote Name (auto-detected from rclone config)
+echo ""
+INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io (detected: $DEFAULT_REMOTE)" "$DEFAULT_REMOTE")
 REMOTE_NAME="$INPUT_REMOTE"
 
 # 6. Installation Directory for scripts
@@ -256,6 +279,7 @@ echo "Scripts installed:"
 echo "  - Sync & Sort Orchestrator: $INSTALL_DIR/putsync.sh"
 echo "  - Hardlink Sorter:          $INSTALL_DIR/sorter.py"
 echo "  - Python Binary:            $PYTHON_BIN"
+echo "  - Rclone Remote Name:       $REMOTE_NAME"
 echo "Configuration file:           $CONF_PATH"
 echo ""
 echo "To run manually:"
