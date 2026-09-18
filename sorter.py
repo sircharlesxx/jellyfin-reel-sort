@@ -532,8 +532,17 @@ def batch_fetch_subtitles(pending):
             continue
 
         if os.path.exists(nosubs_marker):
-            print(f"  -> Skipping (marked .nosubs from previous run): {base_stem}")
-            continue
+            # Expire .nosubs markers after 3 days so we eventually retry
+            # in case new subs were uploaded or VPN blocks cleared up
+            mtime = os.path.getmtime(nosubs_marker)
+            if time.time() - mtime > 86400 * 3:
+                try:
+                    os.remove(nosubs_marker)
+                except Exception:
+                    pass
+            else:
+                print(f"  -> Skipping (marked .nosubs from previous run): {base_stem}")
+                continue
 
         # Build Video object (local disk operation, no network)
         try:
