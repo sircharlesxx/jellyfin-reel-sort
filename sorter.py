@@ -43,6 +43,28 @@ try:
 
     from subliminal import Episode, Movie, Video, scan_video, download_best_subtitles, save_subtitles
     from babelfish import Language
+
+    # Configure subliminal's dogpile.cache region — required before any download calls.
+    # Without this, accessing region._lock_registry raises AttributeError.
+    try:
+        from subliminal.cache import region as _subliminal_region
+        if not _subliminal_region.is_configured:
+            _cache_dir = os.path.expanduser("~/.cache/jellyfin-reel-sort")
+            os.makedirs(_cache_dir, exist_ok=True)
+            _subliminal_region.configure(
+                'dogpile.cache.dbm',
+                expiration_time=3600,
+                arguments={'filename': os.path.join(_cache_dir, 'subliminal.dbm')}
+            )
+    except Exception as _e:
+        # Fallback: in-memory cache (no persistence, but fully functional)
+        try:
+            from subliminal.cache import region as _subliminal_region
+            if not _subliminal_region.is_configured:
+                _subliminal_region.configure('dogpile.cache.memory')
+        except Exception:
+            pass  # Non-fatal: subtitle downloads may still work without caching
+
     SUBLIMINAL_AVAILABLE = True
 except ImportError:
     SUBLIMINAL_AVAILABLE = False
