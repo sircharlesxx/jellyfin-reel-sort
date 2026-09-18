@@ -6,7 +6,7 @@ from guessit import guessit
 
 # Subliminal subtitle downloading imports
 try:
-    from subliminal import Episode, Movie, download_best_subtitles, save_subtitles
+    from subliminal import Episode, Movie, Video, scan_video, download_best_subtitles, save_subtitles
     from babelfish import Language
     SUBLIMINAL_AVAILABLE = True
 except ImportError:
@@ -29,7 +29,6 @@ def discover_directory(candidates, label="directory"):
     for item in candidates:
         if not item:
             continue
-        # Expand user and globs (e.g. /volume*/... or /mnt/*)
         expanded = os.path.expanduser(item)
         matches = glob.glob(expanded)
         for match in sorted(matches):
@@ -101,14 +100,12 @@ def resolve_paths():
 
     # 3. Discover SHOWS_DIR
     if not SHOWS_DIR or not os.path.isdir(SHOWS_DIR):
-        # First check inside MEDIA_DIR (case-insensitive for 'Shows', 'shows', 'TV Shows', 'TV')
         for name in ['Shows', 'TV Shows', 'TV', 'Series']:
             found = find_subfolder_ci(MEDIA_DIR, name)
             if found:
                 SHOWS_DIR = found
                 break
 
-        # If not found inside MEDIA_DIR, check system-wide candidates
         if not SHOWS_DIR or not os.path.isdir(SHOWS_DIR):
             shows_candidates = [
                 SHOWS_DIR,
@@ -125,14 +122,12 @@ def resolve_paths():
 
     # 4. Discover MOVIES_DIR
     if not MOVIES_DIR or not os.path.isdir(MOVIES_DIR):
-        # First check inside MEDIA_DIR (case-insensitive for 'Movies', 'movies', 'Films')
         for name in ['Movies', 'Films']:
             found = find_subfolder_ci(MEDIA_DIR, name)
             if found:
                 MOVIES_DIR = found
                 break
 
-        # If not found inside MEDIA_DIR, check system-wide candidates
         if not MOVIES_DIR or not os.path.isdir(MOVIES_DIR):
             movies_candidates = [
                 MOVIES_DIR,
@@ -202,8 +197,6 @@ def cleanup_source(source_path):
             print(f"  -> Moved source to archive: {source_path}")
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
-            
-    # If 'none', do nothing (preserves original file for seeding)
 
 def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_num=None, movie_name=None, year=None):
     """Download subtitles using subliminal and save them in Jellyfin format: MovieName.en.srt"""
@@ -212,6 +205,7 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
         return
 
     if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
+        print(f"  -> Subtitle downloading disabled by config (DOWNLOAD_SUBTITLES={DOWNLOAD_SUBTITLES}).")
         return
 
     dest_dir = os.path.dirname(dest_path)
@@ -248,39 +242,51 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
             missing_languages.add(lang)
 
     if not missing_languages:
+        print(f"  -> Subtitles already exist for: {base_stem}")
         return
 
-    print(f"  -> Fetching subtitles for: {base_stem} ({', '.join(l.alpha2 for l in missing_languages)})")
+    print(f"  -> Querying subtitle providers for: {base_stem} [{', '.join(l.alpha2 for l in missing_languages)}]...")
 
     try:
-        if media_type == 'episode':
-            guess = {
-                'title': show_name,
-                'season': s_num,
-                'episode': e_num,
-                'type': 'episode'
-            }
-            if year:
-                guess['year'] = year
-            video = Episode.fromguess(dest_path, guess)
-        else:
-            guess = {
-                'title': movie_name,
-                'type': 'movie'
-            }
-            if year:
-                guess['year'] = year
-            video = Movie.fromguess(dest_path, guess)
+        # Build Video object using subliminal's scan_video for accurate metadata and hash
+        video = None
+        try:
+            video = scan_video(dest_path)
+        except Exception:
+            pass
 
+        # Fallback to Episode.fromguess / Movie.fromguess if scan_video returns generic Video
+        if media_type == 'episode':
+            if not isinstance(video, Episode):
+                guess = {
+                    'title': show_name,
+                    'season': s_num,
+                    'episode': e_num,
+                    'type': 'episode'
+                }
+                if year:
+                    guess['year'] = int(year) if str(year).isdigit() else year
+                video = Episode.fromguess(dest_path, guess)
+        else:
+            if not isinstance(video, Movie):
+                guess = {
+                    'title': movie_name,
+                    'type': 'movie'
+                }
+                if year:
+                    guess['year'] = int(year) if str(year).isdigit() else year
+                video = Movie.fromguess(dest_path, guess)
+
+        # Download best matching subtitles across all configured providers
         subtitles = download_best_subtitles([video], missing_languages)
         if subtitles.get(video):
             saved = save_subtitles(video, subtitles[video], directory=dest_dir, language_format='alpha2')
             for s in saved:
-                print(f"  -> Saved subtitle: {base_stem}.{s.language.alpha2}.srt")
+                print(f"  [✓] Downloaded subtitle: {base_stem}.{s.language.alpha2}.srt")
         else:
-            print("  -> No subtitles found from providers.")
+            print(f"  [-] No subtitles found from online providers for '{base_stem}'.")
     except Exception as e:
-        print(f"  -> Subtitle download error: {e}")
+        print(f"  [!] Subtitle download error: {e}")
 
 def process_files():
     load_config()
@@ -333,6 +339,7 @@ def process_files():
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
                     else:
+                        print(f"Existing Show found: {clean_name}")
                         fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
 
                 # --- HANDLE MOVIES ---
@@ -358,6 +365,7 @@ def process_files():
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
                     else:
+                        print(f"Existing Movie found: {clean_name}")
                         fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
                 else:
                     # Log files that don't match movie/show patterns
