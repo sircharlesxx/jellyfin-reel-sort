@@ -435,6 +435,153 @@ def cleanup_source(source_path):
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
 
+def sanitize_srt_file(filepath):
+    """Clean and standardize an SRT file: strip BOM, ensure UTF-8, normalize CRLF line endings.
+
+    Jellyfin uses Nikse.SubtitleEdit (SubRip parser) to parse .srt files. If an SRT file
+    starts with a UTF-8 Byte Order Mark (\xef\xbb\xbf or \ufeff), int.TryParse fails on line 1,
+    causing the entire subtitle file to be rejected as empty/invalid while still appearing
+    in the Closed Captions selection menu.
+    """
+    try:
+        if not os.path.isfile(filepath):
+            return False
+
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+
+        if not raw:
+            return False
+
+        needs_fix = False
+
+        # Detect and strip byte-level BOMs
+        if raw.startswith(b'\xef\xbb\xbf'):
+            raw = raw[3:]
+            needs_fix = True
+        elif raw.startswith(b'\xff\xfe'):
+            raw = raw.decode('utf-16-le', errors='replace').encode('utf-8')
+            needs_fix = True
+        elif raw.startswith(b'\xfe\xff'):
+            raw = raw.decode('utf-16-be', errors='replace').encode('utf-8')
+            needs_fix = True
+
+        # Decode text safely
+        text = None
+        for enc in ('utf-8', 'cp1252', 'latin-1'):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if not text:
+            text = raw.decode('utf-8', errors='replace')
+            needs_fix = True
+
+        # Strip any leading Unicode BOM (\ufeff) or stray whitespace
+        if text.startswith('\ufeff'):
+            text = text.lstrip('\ufeff')
+            needs_fix = True
+
+        # Check line endings: SubRip standard is CRLF (\r\n)
+        if '\r\n' not in text and '\n' in text:
+            needs_fix = True
+
+        # Always ensure proper 0644 permissions for Docker Jellyfin
+        try:
+            os.chmod(filepath, 0o644)
+        except Exception:
+            pass
+
+        if not needs_fix:
+            return False
+
+        # Clean lines and normalize to CRLF
+        lines = [line.rstrip('\r\n') for line in text.split('\n')]
+        clean_content = '\r\n'.join(lines).strip() + '\r\n'
+
+        with open(filepath, 'wb') as f:
+            f.write(clean_content.encode('utf-8'))
+
+        return True
+    except Exception as e:
+        print(f"  [!] Failed to sanitize SRT {filepath}: {e}")
+        return False
+
+
+def sanitize_all_existing_subtitles():
+    """Scan SHOWS_DIR and MOVIES_DIR to fix any existing .srt files in-place."""
+    dirs_to_check = [d for d in (SHOWS_DIR, MOVIES_DIR) if d and os.path.isdir(d)]
+    if not dirs_to_check:
+        return
+
+    fixed = 0
+    for base_dir in dirs_to_check:
+        for root, _, files in os.walk(base_dir):
+            for f in files:
+                if f.lower().endswith('.srt'):
+                    full_path = os.path.join(root, f)
+                    if sanitize_srt_file(full_path):
+                        fixed += 1
+
+    if fixed > 0:
+        print(f"[+] Subtitle sanitizer: Repaired {fixed} existing subtitle file(s) (stripped BOM / normalized CRLF).")
+
+
+def find_accompanying_subtitles(root, video_file, s_num=None, e_num=None):
+    """Find subtitle files already packaged with the download in root or a Subs/ subfolder."""
+    import re
+    base_name = os.path.splitext(video_file)[0]
+
+    # 1. Exact base name match in the same folder
+    for ext in ('.srt', '.en.srt', '.eng.srt', '.vtt'):
+        candidate = os.path.join(root, f"{base_name}{ext}")
+        if os.path.isfile(candidate):
+            return candidate
+
+    # 2. Check all .srt files in root and immediate subfolders (Subs, Subtitles)
+    search_dirs = [root]
+    for sub in ('Subs', 'subs', 'Subtitles', 'subtitles'):
+        sub_dir = os.path.join(root, sub)
+        if os.path.isdir(sub_dir):
+            search_dirs.append(sub_dir)
+
+    all_srts = []
+    for d in search_dirs:
+        try:
+            for f in os.listdir(d):
+                if f.lower().endswith(('.srt', '.vtt')):
+                    all_srts.append(os.path.join(d, f))
+        except Exception:
+            pass
+
+    # For TV episodes: look for SxxExx match
+    if s_num is not None and e_num is not None:
+        patterns = [
+            rf'[sS]{s_num:02d}[eE]{e_num:02d}',
+            rf'{s_num}x{e_num:02d}',
+            rf'{s_num}x{e_num}',
+        ]
+        for srt_path in all_srts:
+            filename = os.path.basename(srt_path)
+            if any(re.search(p, filename) for p in patterns):
+                if 'eng' in filename.lower() or 'en.' in filename.lower() or not any(l in filename.lower() for l in ('spa', 'fre', 'ger', 'ita', 'rus', 'por', 'chi', 'jpn')):
+                    return srt_path
+        return None
+
+    # For Movies: if single movie in folder, pick English or only srt
+    for srt_path in all_srts:
+        fn = os.path.basename(srt_path).lower()
+        if any(w in fn for w in ('eng', 'english', '.en.')):
+            return srt_path
+
+    if len(all_srts) == 1:
+        return all_srts[0]
+
+    return None
+
+
 def _get_missing_languages(dest_dir, base_stem, languages):
     """Return the subset of languages that don't already have a subtitle file on disk."""
     missing = set()
@@ -457,23 +604,26 @@ def _get_missing_languages(dest_dir, base_stem, languages):
 
 def _build_video_object(dest_path, media_type, info,
                         show_name=None, s_num=None, e_num=None,
-                        movie_name=None, year=None):
-    """Build a subliminal Video object for a media file, using scan_video with guessit fallback."""
+                        movie_name=None, year=None,
+                        original_filename=None):
+    """Build a subliminal Video object for a media file, preserving release group info for accurate scoring."""
     video = None
     try:
-        video = scan_video(dest_path)
+        video = scan_video(dest_path, name=original_filename)
     except Exception:
         pass
 
     if media_type == 'episode':
         if not isinstance(video, Episode):
-            guess = {'title': show_name, 'season': s_num, 'episode': e_num, 'type': 'episode'}
+            guess = dict(info) if info else {}
+            guess.update({'title': show_name, 'season': s_num, 'episode': e_num, 'type': 'episode'})
             if year:
                 guess['year'] = int(year) if str(year).isdigit() else year
             video = Episode.fromguess(dest_path, guess)
     else:
         if not isinstance(video, Movie):
-            guess = {'title': movie_name, 'type': 'movie'}
+            guess = dict(info) if info else {}
+            guess.update({'title': movie_name, 'type': 'movie'})
             if year:
                 guess['year'] = int(year) if str(year).isdigit() else year
             video = Movie.fromguess(dest_path, guess)
@@ -558,6 +708,7 @@ def batch_fetch_subtitles(pending):
                 e_num      = item.get('e_num'),
                 movie_name = item.get('movie_name'),
                 year       = item.get('year'),
+                original_filename = item.get('original_filename'),
             )
         except Exception as e:
             print(f"  [!] Could not build video object for {base_stem}: {e}")
@@ -604,10 +755,7 @@ def batch_fetch_subtitles(pending):
                         sub_name = f"{base_stem}.{s.language.alpha2}.srt"
                         sub_path = os.path.join(dest_dir, sub_name)
                         if os.path.exists(sub_path):
-                            try:
-                                os.chmod(sub_path, 0o644)
-                            except Exception:
-                                pass
+                            sanitize_srt_file(sub_path)
                         print(f"    [✓] Saved: {sub_name}")
                     total_saved += len(saved)
                     # Clear any stale .nosubs marker
@@ -663,6 +811,10 @@ def process_files():
     os.makedirs(SHOWS_DIR, exist_ok=True)
     os.makedirs(MOVIES_DIR, exist_ok=True)
 
+    # Automatically sanitize all existing .srt files in media directories
+    # (strips UTF-8 BOM, fixes CRLF line endings, ensures 0644 permissions)
+    sanitize_all_existing_subtitles()
+
     new_media_linked = 0
     subtitle_pending = []  # collect all files needing subtitle lookup
 
@@ -700,9 +852,26 @@ def process_files():
                 else:
                     print(f"Existing Show: {clean_name}")
 
+                # Check if download package already included a matching subtitle
+                inc_sub = find_accompanying_subtitles(root, file, s_num=s_num, e_num=e_num)
+                if inc_sub:
+                    dest_sub = os.path.join(dest_dir, f"{show_name} - S{s_num:02d}E{e_num:02d}.en.srt")
+                    if not os.path.exists(dest_sub):
+                        try:
+                            try:
+                                os.link(inc_sub, dest_sub)
+                            except Exception:
+                                shutil.copy2(inc_sub, dest_sub)
+                            sanitize_srt_file(dest_sub)
+                            print(f"  [✓] Linked included subtitle: {os.path.basename(dest_sub)}")
+                            cleanup_source(inc_sub)
+                        except Exception as e:
+                            print(f"  [!] Failed to link included subtitle: {e}")
+
                 subtitle_pending.append({
                     'dest_path': dest_path, 'media_type': 'episode', 'info': info,
                     'show_name': show_name, 's_num': s_num, 'e_num': e_num, 'year': year,
+                    'original_filename': file,
                 })
 
             # MOVIE
@@ -728,9 +897,26 @@ def process_files():
                 else:
                     print(f"Existing Movie: {clean_name}")
 
+                # Check if download package already included a matching subtitle
+                inc_sub = find_accompanying_subtitles(root, file)
+                if inc_sub:
+                    dest_sub = os.path.join(dest_dir, f"{folder_name}.en.srt")
+                    if not os.path.exists(dest_sub):
+                        try:
+                            try:
+                                os.link(inc_sub, dest_sub)
+                            except Exception:
+                                shutil.copy2(inc_sub, dest_sub)
+                            sanitize_srt_file(dest_sub)
+                            print(f"  [✓] Linked included subtitle: {os.path.basename(dest_sub)}")
+                            cleanup_source(inc_sub)
+                        except Exception as e:
+                            print(f"  [!] Failed to link included subtitle: {e}")
+
                 subtitle_pending.append({
                     'dest_path': dest_path, 'media_type': 'movie', 'info': info,
                     'movie_name': movie_name, 'year': year,
+                    'original_filename': file,
                 })
 
             else:
