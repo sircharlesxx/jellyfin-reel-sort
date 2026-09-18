@@ -24,6 +24,18 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "")
 DOWNLOAD_SUBTITLES = os.environ.get("DOWNLOAD_SUBTITLES", "")  # 'true' or 'false'
 SUBTITLE_LANGUAGES = os.environ.get("SUBTITLE_LANGUAGES", "")  # comma-separated codes, e.g. 'en', 'es'
 
+def parse_language(code):
+    """Robustly parse any language code (2-letter, 3-letter, or IETF) into a babelfish Language object."""
+    code = code.strip()
+    if not code:
+        return None
+    for method in (Language.fromietf, Language.fromalpha2, Language.fromalpha3b, Language.fromalpha3t, Language):
+        try:
+            return method(code)
+        except Exception:
+            pass
+    return None
+
 def discover_directory(candidates, label="directory"):
     """Check a list of candidate path patterns/strings and return the first existing directory."""
     for item in candidates:
@@ -211,15 +223,14 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
     dest_dir = os.path.dirname(dest_path)
     base_stem = os.path.splitext(os.path.basename(dest_path))[0]
 
-    # Parse configured language codes into babelfish Language objects
+    # Parse configured language codes into babelfish Language objects (supports 'en', 'eng', etc.)
     languages = set()
     for code in SUBTITLE_LANGUAGES.split(','):
-        code = code.strip().lower()
-        if code:
-            try:
-                languages.add(Language(code))
-            except Exception as e:
-                print(f"  -> Warning: Invalid language code '{code}': {e}")
+        parsed = parse_language(code)
+        if parsed:
+            languages.add(parsed)
+        else:
+            print(f"  -> Warning: Could not parse language code '{code}'")
 
     if not languages:
         return
