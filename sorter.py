@@ -80,7 +80,52 @@ CLEANUP_MODE = os.environ.get("CLEANUP_MODE", "")  # 'delete', 'move', or 'none'
 ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "")
 DOWNLOAD_SUBTITLES = os.environ.get("DOWNLOAD_SUBTITLES", "")  # 'true' or 'false'
 SUBTITLE_LANGUAGES = os.environ.get("SUBTITLE_LANGUAGES", "")  # comma-separated codes, e.g. 'en', 'es'
+SUBTITLE_PROVIDERS = os.environ.get("SUBTITLE_PROVIDERS", "")  # comma-separated provider names, or empty for auto
 SUBTITLE_DELAY = float(os.environ.get("SUBTITLE_DELAY", "2.0"))  # Seconds to wait between API calls to avoid rate limits
+
+RESOLVED_PROVIDERS = None
+
+def get_active_providers():
+    """Resolve and return operational subtitle providers, filtering out dead domains like podnapisi.net."""
+    global RESOLVED_PROVIDERS
+    if RESOLVED_PROVIDERS is not None:
+        return RESOLVED_PROVIDERS
+
+    if not SUBLIMINAL_AVAILABLE:
+        RESOLVED_PROVIDERS = []
+        return RESOLVED_PROVIDERS
+
+    import socket
+    from urllib.parse import urlparse
+    import subliminal.core
+
+    # Standard providers supported in Subliminal's default pool
+    default_pool = ['addic7ed', 'gestdown', 'napiprojekt', 'opensubtitles', 'opensubtitlescom', 'subtis', 'subtitulamos', 'tvsubtitles']
+    available_names = list(subliminal.core.provider_manager.names())
+
+    if SUBTITLE_PROVIDERS:
+        candidates = [p.strip() for p in SUBTITLE_PROVIDERS.split(',') if p.strip() in available_names]
+    else:
+        # Exclude podnapisi by default since www.podnapisi.net has invalid/dead DNS records
+        candidates = [p for p in default_pool if p in available_names and p != 'podnapisi']
+
+    # Pre-flight DNS check: ensure candidate hostnames resolve so requests don't raise 'Name or service not known'
+    active = []
+    for p_name in candidates:
+        try:
+            cls = subliminal.core.provider_manager[p_name].plugin
+            url = getattr(cls, 'server_url', None)
+            if url:
+                host = urlparse(url).hostname
+                if host:
+                    socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+            active.append(p_name)
+        except Exception:
+            # Skip provider if DNS resolution fails
+            continue
+
+    RESOLVED_PROVIDERS = active
+    return RESOLVED_PROVIDERS
 
 def parse_language(code):
     """Robustly parse any language code (2-letter, 3-letter, or IETF) into a babelfish Language object."""
@@ -212,7 +257,7 @@ def resolve_paths():
             MOVIES_DIR = found_movies if found_movies else os.path.join(MEDIA_DIR, "Movies")
 
 def load_config():
-    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_DELAY
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
             for line in f:
@@ -237,6 +282,8 @@ def load_config():
                         DOWNLOAD_SUBTITLES = val
                     elif key == "SUBTITLE_LANGUAGES" and not SUBTITLE_LANGUAGES:
                         SUBTITLE_LANGUAGES = val
+                    elif key == "SUBTITLE_PROVIDERS" and not SUBTITLE_PROVIDERS:
+                        SUBTITLE_PROVIDERS = val
                     elif key == "SUBTITLE_DELAY":
                         try:
                             SUBTITLE_DELAY = float(val)
@@ -364,8 +411,9 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
                     guess['year'] = int(year) if str(year).isdigit() else year
                 video = Movie.fromguess(dest_path, guess)
 
-        # Download best matching subtitles
-        subtitles = download_best_subtitles([video], missing_languages)
+        # Download best matching subtitles using active verified providers
+        active_providers = get_active_providers()
+        subtitles = download_best_subtitles([video], missing_languages, providers=active_providers)
         query_succeeded = True
         if subtitles.get(video):
             saved = save_subtitles(video, subtitles[video], directory=dest_dir, language_format='alpha2')
@@ -409,6 +457,8 @@ def process_files():
     if CLEANUP_MODE == 'move':
         print(f"[+] Archive directory:          {ARCHIVE_DIR}")
     print(f"[+] Download subtitles:         {DOWNLOAD_SUBTITLES} ({SUBTITLE_LANGUAGES})")
+    providers = get_active_providers()
+    print(f"[+] Subtitle providers:         {', '.join(providers) if providers else 'None'}")
     print(f"[+] Rate-limit delay:           {SUBTITLE_DELAY}s between API requests")
 
     if not os.path.exists(DOWNLOADS_DIR):

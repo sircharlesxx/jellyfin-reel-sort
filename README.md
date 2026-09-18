@@ -113,6 +113,8 @@ All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via en
 | `ARCHIVE_DIR` | Destination folder when `CLEANUP_MODE="move"` | `~/Jellyfin/processed/` |
 | `DOWNLOAD_SUBTITLES` | Whether to automatically fetch subtitles (`true` / `false`) | `true` |
 | `SUBTITLE_LANGUAGES` | Comma-separated language codes for subtitles | `en` |
+| `SUBTITLE_PROVIDERS` | Comma-separated provider list (auto-filters dead domains) | Auto (active providers) |
+| `SUBTITLE_DELAY` | Seconds to wait between provider API calls (jitter added) | `2.0` |
 | `PYTHON_BIN` | Python interpreter (points to venv if externally managed) | `python3` or dedicated venv path |
 | `REMOTE_NAME` | Rclone remote name configured for your cloud storage | `put.io` |
 | `LOG_FILE` | Log output file for transfers and sorting | `~/.local/state/jellyfin-reel-sort/sync.log` |
