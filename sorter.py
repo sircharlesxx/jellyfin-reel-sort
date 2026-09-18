@@ -556,57 +556,63 @@ def batch_fetch_subtitles(pending):
     if not queue:
         return 0
 
-    # --- Single batched provider call ---
-    # download_best_subtitles opens one ProviderPool for ALL videos.
-    # Each provider (tvsubtitles, opensubtitles, etc.) gets ONE session
-    # across the whole batch instead of one session per file.
     active_providers = get_active_providers()
-    print(f"\n[+] Querying subtitle providers for {len(queue)} file(s) in a single batch...")
+    chunk_size = 10
+    total_saved = 0
+
+    print(f"\n[+] Querying subtitle providers for {len(queue)} file(s) in chunks of {chunk_size}...")
     print(f"    Providers: {', '.join(active_providers)}")
 
-    video_objects = [entry[0] for entry in queue]
-    all_subtitles = {}
-    query_succeeded = False
-    try:
-        all_subtitles = download_best_subtitles(
-            video_objects,
-            languages,
-            providers=active_providers,
-        )
-        query_succeeded = True
-    except Exception as e:
-        print(f"  [!] Batch subtitle query error: {e}")
+    for i in range(0, len(queue), chunk_size):
+        chunk = queue[i:i + chunk_size]
+        video_objects = [entry[0] for entry in chunk]
+        
+        print(f"\n  -> Processing chunk {i//chunk_size + 1}/{(len(queue) + chunk_size - 1)//chunk_size} ({len(chunk)} files)...")
+        
+        chunk_subtitles = {}
+        query_succeeded = False
+        try:
+            chunk_subtitles = download_best_subtitles(
+                video_objects,
+                languages,
+                providers=active_providers,
+            )
+            query_succeeded = True
+        except Exception as e:
+            print(f"  [!] Chunk subtitle query error: {e}")
 
-    # --- Save results and write .nosubs markers ---
-    total_saved = 0
-    for video, dest_dir, base_stem, nosubs_marker in queue:
-        subs = all_subtitles.get(video, [])
-        if subs:
-            try:
-                saved = save_subtitles(video, subs, directory=dest_dir, language_format='alpha2')
-                for s in saved:
-                    print(f"  [✓] Saved: {base_stem}.{s.language.alpha2}.srt")
-                total_saved += len(saved)
-                # Clear any stale .nosubs marker
-                if os.path.exists(nosubs_marker):
-                    try:
-                        os.remove(nosubs_marker)
-                    except Exception:
-                        pass
-            except Exception as e:
-                print(f"  [!] Failed to save subtitle for {base_stem}: {e}")
-        elif query_succeeded:
-            # Search ran cleanly but found nothing — write .nosubs marker
-            print(f"  [-] No subtitles found for: {base_stem}")
-            try:
-                with open(nosubs_marker, 'w') as _f:
-                    _f.write(f"No subtitles found: {datetime.datetime.now().isoformat()}\n")
-                print(f"  -> Created marker: {os.path.basename(nosubs_marker)}")
-            except Exception:
-                pass
-        else:
-            # Query itself errored — do NOT write .nosubs so we retry next run
-            print(f"  [?] Subtitle status unknown (query error) for: {base_stem}")
+        # Save results and write .nosubs markers for this chunk
+        for video, dest_dir, base_stem, nosubs_marker in chunk:
+            subs = chunk_subtitles.get(video, [])
+            if subs:
+                try:
+                    saved = save_subtitles(video, subs, directory=dest_dir, language_format='alpha2')
+                    for s in saved:
+                        print(f"    [✓] Saved: {base_stem}.{s.language.alpha2}.srt")
+                    total_saved += len(saved)
+                    # Clear any stale .nosubs marker
+                    if os.path.exists(nosubs_marker):
+                        try:
+                            os.remove(nosubs_marker)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"    [!] Failed to save subtitle for {base_stem}: {e}")
+            elif query_succeeded:
+                # Search ran cleanly but found nothing — write .nosubs marker
+                print(f"    [-] No subtitles found for: {base_stem}")
+                try:
+                    with open(nosubs_marker, 'w') as _f:
+                        _f.write(f"No subtitles found: {datetime.datetime.now().isoformat()}\n")
+                except Exception:
+                    pass
+            else:
+                # Query itself errored — do NOT write .nosubs so we retry next run
+                print(f"    [?] Subtitle status unknown (query error) for: {base_stem}")
+
+        # Polite delay between chunks
+        if i + chunk_size < len(queue):
+            time.sleep(2.0)
 
     return total_saved
 
