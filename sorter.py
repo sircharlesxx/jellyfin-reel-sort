@@ -87,7 +87,6 @@ SUBTITLE_PROVIDERS = os.environ.get("SUBTITLE_PROVIDERS", "")  # comma-separated
 SUBTITLE_DELAY = float(os.environ.get("SUBTITLE_DELAY", "2.0"))  # Seconds to wait between API calls to avoid rate limits
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "")  # Optional: e.g. http://localhost:8096 (auto-discovered if empty)
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")  # Optional API key for triggering library scan on import
-OPENSUBTITLES_API_KEY = os.environ.get("OPENSUBTITLES_API_KEY", "")  # Optional API key for opensubtitles.com
 
 RESOLVED_PROVIDERS = None
 
@@ -405,8 +404,6 @@ def load_config():
                         JELLYFIN_URL = val
                     elif key == "JELLYFIN_API_KEY" and not JELLYFIN_API_KEY:
                         JELLYFIN_API_KEY = val
-                    elif key == "OPENSUBTITLES_API_KEY" and not OPENSUBTITLES_API_KEY:
-                        OPENSUBTITLES_API_KEY = val
 
     # Run lazy auto-discovery for storage paths
     resolve_paths()
@@ -575,10 +572,6 @@ def batch_fetch_subtitles(pending):
     chunk_size = 10
     total_saved = 0
 
-    provider_configs = {}
-    if OPENSUBTITLES_API_KEY:
-        provider_configs['opensubtitlescom'] = {'apikey': OPENSUBTITLES_API_KEY}
-
     print(f"\n[+] Querying subtitle providers for {len(queue)} file(s) in chunks of {chunk_size}...")
     print(f"    Providers: {', '.join(active_providers)}")
 
@@ -595,7 +588,6 @@ def batch_fetch_subtitles(pending):
                 video_objects,
                 languages,
                 providers=active_providers,
-                provider_configs=provider_configs,
             )
             query_succeeded = True
         except Exception as e:
