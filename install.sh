@@ -208,11 +208,35 @@ echo ""
 INPUT_REMOTE=$(prompt_with_default "Enter rclone remote name for Put.io (detected: $DEFAULT_REMOTE)" "$DEFAULT_REMOTE")
 REMOTE_NAME="$INPUT_REMOTE"
 
-# 6. Installation Directory for scripts
+# 6. Jellyfin Server Auto-Detection & Library Auto-Refresh
+echo ""
+DEFAULT_JF_URL=""
+if command -v curl >/dev/null 2>&1; then
+    if curl -s --max-time 1 "http://127.0.0.1:8096/System/Info/Public" 2>/dev/null | grep -qi "Jellyfin"; then
+        DEFAULT_JF_URL="http://127.0.0.1:8096"
+    fi
+fi
+if [ -z "$DEFAULT_JF_URL" ] && command -v docker >/dev/null 2>&1; then
+    JF_PORT=$(docker ps --format '{{.Image}} {{.Ports}}' 2>/dev/null | grep -i "jellyfin" | grep -o '0\.0\.0\.0:[0-9]*' | head -n1 | cut -d: -f2)
+    if [ -n "$JF_PORT" ]; then
+        DEFAULT_JF_URL="http://127.0.0.1:$JF_PORT"
+    fi
+fi
+
+if [ -n "$DEFAULT_JF_URL" ]; then
+    echo "  [✓] Detected active Jellyfin server on $DEFAULT_JF_URL"
+    INPUT_JF_KEY=$(prompt_with_default "Enter Jellyfin API Key for automatic library scan (leave blank to skip)" "")
+    JELLYFIN_API_KEY="$INPUT_JF_KEY"
+else
+    INPUT_JF_KEY=$(prompt_with_default "Enter Jellyfin API Key for automatic library scan (leave blank to skip)" "")
+    JELLYFIN_API_KEY="$INPUT_JF_KEY"
+fi
+
+# 7. Installation Directory for scripts
 INPUT_INSTALL_DIR=$(prompt_with_default "Enter directory to install executable scripts" "$DEFAULT_INSTALL_DIR")
 INSTALL_DIR="${INPUT_INSTALL_DIR/#\~/$HOME}"
 
-# 7. Config file destination
+# 8. Config file destination
 if [ "$EUID" -eq 0 ]; then
     DEFAULT_CONF="/etc/jellyfin-reel-sort.conf"
 else
@@ -230,6 +254,8 @@ echo "  - Cleanup Mode:       $CLEANUP_MODE"
 echo "  - Subtitle Downloads: $DOWNLOAD_SUBTITLES ($SUBTITLE_LANGUAGES)"
 echo "  - Python Executable:  $PYTHON_BIN"
 echo "  - Rclone Remote:      $REMOTE_NAME"
+[ -n "$DEFAULT_JF_URL" ] && echo "  - Jellyfin Server:    $DEFAULT_JF_URL"
+[ -n "$JELLYFIN_API_KEY" ] && echo "  - Jellyfin Auto-Scan: Enabled (API key set)"
 echo "  - Install Scripts:    $INSTALL_DIR"
 echo "  - Config File:        $CONF_PATH"
 echo ""
@@ -256,6 +282,8 @@ DOWNLOAD_SUBTITLES="$DOWNLOAD_SUBTITLES"
 SUBTITLE_LANGUAGES="$SUBTITLE_LANGUAGES"
 PYTHON_BIN="$PYTHON_BIN"
 REMOTE_NAME="$REMOTE_NAME"
+JELLYFIN_URL="$DEFAULT_JF_URL"
+JELLYFIN_API_KEY="$JELLYFIN_API_KEY"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"
 SORTER_PATH="$INSTALL_DIR/sorter.py"

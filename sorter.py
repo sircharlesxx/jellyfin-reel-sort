@@ -82,6 +82,8 @@ DOWNLOAD_SUBTITLES = os.environ.get("DOWNLOAD_SUBTITLES", "")  # 'true' or 'fals
 SUBTITLE_LANGUAGES = os.environ.get("SUBTITLE_LANGUAGES", "")  # comma-separated codes, e.g. 'en', 'es'
 SUBTITLE_PROVIDERS = os.environ.get("SUBTITLE_PROVIDERS", "")  # comma-separated provider names, or empty for auto
 SUBTITLE_DELAY = float(os.environ.get("SUBTITLE_DELAY", "2.0"))  # Seconds to wait between API calls to avoid rate limits
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "")  # Optional: e.g. http://localhost:8096 (auto-discovered if empty)
+JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")  # Optional API key for triggering library scan on import
 
 RESOLVED_PROVIDERS = None
 
@@ -126,6 +128,99 @@ def get_active_providers():
 
     RESOLVED_PROVIDERS = active
     return RESOLVED_PROVIDERS
+
+DISCOVERED_JELLYFIN_URL = None
+
+def discover_jellyfin_url():
+    """Probe localhost and Docker port mappings to auto-discover a running Jellyfin instance."""
+    global DISCOVERED_JELLYFIN_URL
+    if DISCOVERED_JELLYFIN_URL is not None:
+        return DISCOVERED_JELLYFIN_URL
+
+    if JELLYFIN_URL:
+        DISCOVERED_JELLYFIN_URL = JELLYFIN_URL.rstrip('/')
+        return DISCOVERED_JELLYFIN_URL
+
+    candidate_ports = [8096, 8920, 8080, 80]
+
+    # Check docker inspect / docker ps if docker CLI is present
+    try:
+        import subprocess
+        import re
+        docker_out = subprocess.check_output(
+            ["docker", "ps", "--format", "{{.Image}} {{.Ports}}"],
+            stderr=subprocess.DEVNULL, timeout=2
+        ).decode("utf-8")
+        for line in docker_out.splitlines():
+            if "jellyfin" in line.lower():
+                matches = re.findall(r'0\.0\.0\.0:(\d+)->', line)
+                for port_str in matches:
+                    candidate_ports.insert(0, int(port_str))
+    except Exception:
+        pass
+
+    import socket
+    import urllib.request
+    import json
+
+    # Deduplicate candidate ports
+    ports_to_check = []
+    seen = set()
+    for p in candidate_ports:
+        if p not in seen:
+            seen.add(p)
+            ports_to_check.append(p)
+
+    for port in ports_to_check:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            res = s.connect_ex(('127.0.0.1', port))
+            s.close()
+            if res == 0:
+                # Port is open; verify it is indeed Jellyfin via public info endpoint
+                url = f"http://127.0.0.1:{port}/System/Info/Public"
+                req = urllib.request.Request(url, headers={"User-Agent": "jellyfin-reel-sort"})
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode('utf-8'))
+                        if "Jellyfin" in data.get("ProductName", ""):
+                            DISCOVERED_JELLYFIN_URL = f"http://127.0.0.1:{port}"
+                            return DISCOVERED_JELLYFIN_URL
+        except Exception:
+            continue
+
+    DISCOVERED_JELLYFIN_URL = ""
+    return DISCOVERED_JELLYFIN_URL
+
+def trigger_jellyfin_refresh():
+    """Trigger a Jellyfin library scan when new media or subtitles have been added."""
+    url = discover_jellyfin_url()
+    if not url:
+        return
+
+    if not JELLYFIN_API_KEY:
+        print(f"[i] Jellyfin detected at {url}. Set JELLYFIN_API_KEY in config to enable automatic library refresh.")
+        return
+
+    print(f"[+] Notifying Jellyfin server at {url} to scan media libraries...")
+    try:
+        import urllib.request
+        refresh_url = f"{url}/Library/Refresh"
+        headers = {
+            "User-Agent": "jellyfin-reel-sort",
+            "Authorization": f'MediaBrowser Token="{JELLYFIN_API_KEY}"',
+            "X-Emby-Token": JELLYFIN_API_KEY,
+            "Content-Length": "0"
+        }
+        req = urllib.request.Request(refresh_url, method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            if resp.status in (200, 204):
+                print("  [✓] Jellyfin library scan triggered successfully.")
+            else:
+                print(f"  [!] Jellyfin responded with HTTP status {resp.status}")
+    except Exception as e:
+        print(f"  [!] Failed to trigger Jellyfin library refresh: {e}")
 
 def parse_language(code):
     """Robustly parse any language code (2-letter, 3-letter, or IETF) into a babelfish Language object."""
@@ -257,7 +352,7 @@ def resolve_paths():
             MOVIES_DIR = found_movies if found_movies else os.path.join(MEDIA_DIR, "Movies")
 
 def load_config():
-    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY, JELLYFIN_URL, JELLYFIN_API_KEY
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
             for line in f:
@@ -289,6 +384,10 @@ def load_config():
                             SUBTITLE_DELAY = float(val)
                         except ValueError:
                             pass
+                    elif key == "JELLYFIN_URL" and not JELLYFIN_URL:
+                        JELLYFIN_URL = val
+                    elif key == "JELLYFIN_API_KEY" and not JELLYFIN_API_KEY:
+                        JELLYFIN_API_KEY = val
 
     # Run lazy auto-discovery for storage paths
     resolve_paths()
@@ -324,10 +423,10 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
     """Download subtitles using subliminal with User-Agent rotation and polite rate limiting."""
     if not SUBLIMINAL_AVAILABLE:
         print("  -> Subliminal library not installed, skipping subtitle download.")
-        return
+        return 0
 
     if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
-        return
+        return 0
 
     dest_dir = os.path.dirname(dest_path)
     base_stem = os.path.splitext(os.path.basename(dest_path))[0]
@@ -343,7 +442,7 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
             print(f"  -> Warning: Could not parse language code '{code}'")
 
     if not languages:
-        return
+        return 0
 
     # Check if subtitle files already exist in destination directory
     missing_languages = set()
@@ -370,17 +469,18 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
             except Exception:
                 pass
         print(f"  -> Subtitles already exist for: {base_stem}")
-        return
+        return 0
 
     # Skip querying if a previous run already verified that no subtitles were found
     if os.path.exists(nosubs_marker):
         print(f"  -> Skipping subtitle query (marked .nosubs from previous run): {base_stem}")
-        return
+        return 0
 
     print(f"  -> Querying subtitle providers for: {base_stem} [{', '.join(l.alpha2 for l in missing_languages)}]...")
 
     query_succeeded = False
     found_any = False
+    downloaded_count = 0
     try:
         # Build Video object using subliminal's scan_video
         video = None
@@ -425,6 +525,7 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
                     os.remove(nosubs_marker)
                 except Exception:
                     pass
+            downloaded_count = len(saved)
         else:
             print(f"  [-] No subtitles found from online providers for '{base_stem}'.")
 
@@ -448,6 +549,8 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
         sleep_time = SUBTITLE_DELAY + random.uniform(0.2, 1.0)
         time.sleep(sleep_time)
 
+    return downloaded_count
+
 def process_files():
     load_config()
     print(f"[+] Ingest downloads directory: {DOWNLOADS_DIR}")
@@ -461,12 +564,22 @@ def process_files():
     print(f"[+] Subtitle providers:         {', '.join(providers) if providers else 'None'}")
     print(f"[+] Rate-limit delay:           {SUBTITLE_DELAY}s between API requests")
 
+    discovered_jf = discover_jellyfin_url()
+    if discovered_jf:
+        status_note = f"{discovered_jf} (API auto-refresh {'enabled' if JELLYFIN_API_KEY else 'idle - no API key set'})"
+    else:
+        status_note = "Not detected on localhost"
+    print(f"[+] Jellyfin instance:          {status_note}")
+
     if not os.path.exists(DOWNLOADS_DIR):
         print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
         return
 
     os.makedirs(SHOWS_DIR, exist_ok=True)
     os.makedirs(MOVIES_DIR, exist_ok=True)
+
+    new_media_linked = 0
+    new_subs_downloaded = 0
 
     for root, dirs, files in os.walk(DOWNLOADS_DIR):
         for file in files:
@@ -497,13 +610,14 @@ def process_files():
                         try:
                             os.link(source_path, dest_path)
                             print(f"Linked Show: {clean_name}")
-                            fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
+                            new_media_linked += 1
+                            new_subs_downloaded += fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
                             cleanup_source(source_path)
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
                     else:
                         print(f"Existing Show found: {clean_name}")
-                        fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
+                        new_subs_downloaded += fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
 
                 # --- HANDLE MOVIES ---
                 elif 'title' in info and info.get('type') == 'movie':
@@ -523,16 +637,23 @@ def process_files():
                         try:
                             os.link(source_path, dest_path)
                             print(f"Linked Movie: {clean_name}")
-                            fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
+                            new_media_linked += 1
+                            new_subs_downloaded += fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
                             cleanup_source(source_path)
                         except Exception as e:
                             print(f"Error linking {file}: {e}")
                     else:
                         print(f"Existing Movie found: {clean_name}")
-                        fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
+                        new_subs_downloaded += fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
                 else:
                     # Log files that don't match movie/show patterns
                     print(f"Skipped (unrecognized format): {file}")
+
+    if new_media_linked > 0 or new_subs_downloaded > 0:
+        print(f"\n[+] Sort summary: {new_media_linked} new media linked, {new_subs_downloaded} new subtitles downloaded.")
+        trigger_jellyfin_refresh()
+    else:
+        print("\n[+] Sort summary: No new media or subtitles added.")
 
 if __name__ == "__main__":
     process_files()

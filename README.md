@@ -54,6 +54,9 @@ flowchart LR
      - Creates a `.nosubs` marker when no subtitles are available online, preventing repeated queries on future runs (marker automatically clears if subtitles are later added).
      - Formats subtitles according to Jellyfin naming conventions (e.g. `Show - S01E01.en.srt`, `Movie (2023).en.srt`).
      - Configurable language support (single or multiple languages comma-separated).
+   - **Automatic Jellyfin Library Refresh**:
+     - Automatically detects running Jellyfin instances (via Docker port mapping or localhost port probe on `8096`, `8920`, etc.).
+     - Triggers `POST /Library/Refresh` via API only when new media was sorted or new subtitles were downloaded.
    - **Configurable Source Cleanup (`CLEANUP_MODE`)**:
      - `none` *(default)*: Keeps download source file intact (best for continuous torrent seeding/ratio).
      - `delete`: Deletes source file after hardlink and subtitle processing.
@@ -117,6 +120,8 @@ All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via en
 | `SUBTITLE_DELAY` | Seconds to wait between provider API calls (jitter added) | `2.0` |
 | `PYTHON_BIN` | Python interpreter (points to venv if externally managed) | `python3` or dedicated venv path |
 | `REMOTE_NAME` | Rclone remote name configured for your cloud storage | `put.io` |
+| `JELLYFIN_URL` | Base URL of Jellyfin server (auto-detected if blank) | `http://localhost:8096` |
+| `JELLYFIN_API_KEY` | Jellyfin API key to trigger library scan on import | Empty (optional) |
 | `LOG_FILE` | Log output file for transfers and sorting | `~/.local/state/jellyfin-reel-sort/sync.log` |
 | `LOCK_FILE` | Lockfile used by `flock` to prevent collisions | `/tmp/jellyfin_reel_sort.lock` |
 | `SORTER_PATH` | Path to executable `sorter.py` | Installed script path |
