@@ -419,33 +419,9 @@ def cleanup_source(source_path):
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
 
-def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_num=None, movie_name=None, year=None):
-    """Download subtitles using subliminal with User-Agent rotation and polite rate limiting."""
-    if not SUBLIMINAL_AVAILABLE:
-        print("  -> Subliminal library not installed, skipping subtitle download.")
-        return 0
-
-    if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
-        return 0
-
-    dest_dir = os.path.dirname(dest_path)
-    base_stem = os.path.splitext(os.path.basename(dest_path))[0]
-    nosubs_marker = os.path.join(dest_dir, f"{base_stem}.nosubs")
-
-    # Parse configured language codes into babelfish Language objects
-    languages = set()
-    for code in SUBTITLE_LANGUAGES.split(','):
-        parsed = parse_language(code)
-        if parsed:
-            languages.add(parsed)
-        else:
-            print(f"  -> Warning: Could not parse language code '{code}'")
-
-    if not languages:
-        return 0
-
-    # Check if subtitle files already exist in destination directory
-    missing_languages = set()
+def _get_missing_languages(dest_dir, base_stem, languages):
+    """Return the subset of languages that don't already have a subtitle file on disk."""
+    missing = set()
     for lang in languages:
         code_2 = lang.alpha2
         code_3 = lang.alpha3
@@ -456,100 +432,171 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
             f"{base_stem}.{code_3}.sub",
             f"{base_stem}.{code_2}.vtt",
             f"{base_stem}.{code_3}.vtt",
-            f"{base_stem}.srt"
+            f"{base_stem}.srt",
         ]
-        if not any(os.path.exists(os.path.join(dest_dir, candidate)) for candidate in existing):
-            missing_languages.add(lang)
+        if not any(os.path.exists(os.path.join(dest_dir, c)) for c in existing):
+            missing.add(lang)
+    return missing
 
-    if not missing_languages:
-        # Subtitles exist — remove any stale marker if subs were manually added
-        if os.path.exists(nosubs_marker):
-            try:
-                os.remove(nosubs_marker)
-            except Exception:
-                pass
-        print(f"  -> Subtitles already exist for: {base_stem}")
-        return 0
 
-    # Skip querying if a previous run already verified that no subtitles were found
-    if os.path.exists(nosubs_marker):
-        print(f"  -> Skipping subtitle query (marked .nosubs from previous run): {base_stem}")
-        return 0
-
-    print(f"  -> Querying subtitle providers for: {base_stem} [{', '.join(l.alpha2 for l in missing_languages)}]...")
-
-    query_succeeded = False
-    found_any = False
-    downloaded_count = 0
+def _build_video_object(dest_path, media_type, info,
+                        show_name=None, s_num=None, e_num=None,
+                        movie_name=None, year=None):
+    """Build a subliminal Video object for a media file, using scan_video with guessit fallback."""
+    video = None
     try:
-        # Build Video object using subliminal's scan_video
-        video = None
-        try:
-            video = scan_video(dest_path)
-        except Exception:
-            pass
+        video = scan_video(dest_path)
+    except Exception:
+        pass
 
-        # Fallback to Episode.fromguess / Movie.fromguess
-        if media_type == 'episode':
-            if not isinstance(video, Episode):
-                guess = {
-                    'title': show_name,
-                    'season': s_num,
-                    'episode': e_num,
-                    'type': 'episode'
-                }
-                if year:
-                    guess['year'] = int(year) if str(year).isdigit() else year
-                video = Episode.fromguess(dest_path, guess)
-        else:
-            if not isinstance(video, Movie):
-                guess = {
-                    'title': movie_name,
-                    'type': 'movie'
-                }
-                if year:
-                    guess['year'] = int(year) if str(year).isdigit() else year
-                video = Movie.fromguess(dest_path, guess)
+    if media_type == 'episode':
+        if not isinstance(video, Episode):
+            guess = {'title': show_name, 'season': s_num, 'episode': e_num, 'type': 'episode'}
+            if year:
+                guess['year'] = int(year) if str(year).isdigit() else year
+            video = Episode.fromguess(dest_path, guess)
+    else:
+        if not isinstance(video, Movie):
+            guess = {'title': movie_name, 'type': 'movie'}
+            if year:
+                guess['year'] = int(year) if str(year).isdigit() else year
+            video = Movie.fromguess(dest_path, guess)
 
-        # Download best matching subtitles using active verified providers
-        active_providers = get_active_providers()
-        subtitles = download_best_subtitles([video], missing_languages, providers=active_providers)
-        query_succeeded = True
-        if subtitles.get(video):
-            saved = save_subtitles(video, subtitles[video], directory=dest_dir, language_format='alpha2')
-            for s in saved:
-                print(f"  [✓] Downloaded subtitle: {base_stem}.{s.language.alpha2}.srt")
-                found_any = True
+    return video
+
+
+def batch_fetch_subtitles(pending):
+    """
+    Download subtitles for a batch of media files in a single provider session.
+
+    This is the key optimization: subliminal's ProviderPool (used internally by
+    download_best_subtitles) opens one HTTP session per provider for the entire
+    batch, rather than opening and closing a session for every individual file.
+    For a 50-file run, this reduces tvsubtitles/addic7ed connections from 50 to 1.
+
+    pending: list of dicts with keys:
+        dest_path, media_type, info, show_name, s_num, e_num, movie_name, year
+    Returns: int — total subtitle files saved
+    """
+    if not SUBLIMINAL_AVAILABLE:
+        return 0
+    if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
+        return 0
+    if not pending:
+        return 0
+
+    import datetime
+
+    # Parse configured languages once
+    languages = set()
+    for code in SUBTITLE_LANGUAGES.split(','):
+        parsed = parse_language(code)
+        if parsed:
+            languages.add(parsed)
+    if not languages:
+        return 0
+
+    # --- Pre-flight filter (no network, pure disk checks) ---
+    # Remove files that already have subs or are marked .nosubs
+    # so we never even build a Video object for them.
+    queue = []  # (Video, dest_dir, base_stem, nosubs_marker)
+    for item in pending:
+        dest_path  = item['dest_path']
+        dest_dir   = os.path.dirname(dest_path)
+        base_stem  = os.path.splitext(os.path.basename(dest_path))[0]
+        nosubs_marker = os.path.join(dest_dir, f"{base_stem}.nosubs")
+
+        missing = _get_missing_languages(dest_dir, base_stem, languages)
+
+        if not missing:
+            # Subs already present — clear any stale .nosubs marker
             if os.path.exists(nosubs_marker):
                 try:
                     os.remove(nosubs_marker)
                 except Exception:
                     pass
-            downloaded_count = len(saved)
-        else:
-            print(f"  [-] No subtitles found from online providers for '{base_stem}'.")
+            print(f"  -> Subtitles already exist for: {base_stem}")
+            continue
 
-    except Exception as e:
-        print(f"  [!] Subtitle query encountered error (skipping gracefully): {e}")
+        if os.path.exists(nosubs_marker):
+            print(f"  -> Skipping (marked .nosubs from previous run): {base_stem}")
+            continue
 
-    # If the search completed cleanly with 0 subtitles found, write a marker file
-    # so future runs do not repeatedly query providers for missing items
-    if query_succeeded and not found_any:
+        # Build Video object (local disk operation, no network)
         try:
-            import datetime
-            with open(nosubs_marker, "w") as _f:
-                _f.write(f"No subtitles found: {datetime.datetime.now().isoformat()}\n")
-            print(f"  -> Created marker: {os.path.basename(nosubs_marker)}")
-        except Exception:
-            pass
+            video = _build_video_object(
+                dest_path,
+                item['media_type'],
+                item['info'],
+                show_name  = item.get('show_name'),
+                s_num      = item.get('s_num'),
+                e_num      = item.get('e_num'),
+                movie_name = item.get('movie_name'),
+                year       = item.get('year'),
+            )
+        except Exception as e:
+            print(f"  [!] Could not build video object for {base_stem}: {e}")
+            continue
 
-    # Rate-limit delay between files to avoid triggering API throttling or HTTP 429
-    if SUBTITLE_DELAY > 0:
-        # Add slight jitter (e.g. 2.0s to 3.0s) so queries look natural to providers
-        sleep_time = SUBTITLE_DELAY + random.uniform(0.2, 1.0)
-        time.sleep(sleep_time)
+        queue.append((video, dest_dir, base_stem, nosubs_marker))
 
-    return downloaded_count
+    if not queue:
+        return 0
+
+    # --- Single batched provider call ---
+    # download_best_subtitles opens one ProviderPool for ALL videos.
+    # Each provider (tvsubtitles, opensubtitles, etc.) gets ONE session
+    # across the whole batch instead of one session per file.
+    active_providers = get_active_providers()
+    print(f"\n[+] Querying subtitle providers for {len(queue)} file(s) in a single batch...")
+    print(f"    Providers: {', '.join(active_providers)}")
+
+    video_objects = [entry[0] for entry in queue]
+    all_subtitles = {}
+    query_succeeded = False
+    try:
+        all_subtitles = download_best_subtitles(
+            video_objects,
+            languages,
+            providers=active_providers,
+        )
+        query_succeeded = True
+    except Exception as e:
+        print(f"  [!] Batch subtitle query error: {e}")
+
+    # --- Save results and write .nosubs markers ---
+    total_saved = 0
+    for video, dest_dir, base_stem, nosubs_marker in queue:
+        subs = all_subtitles.get(video, [])
+        if subs:
+            try:
+                saved = save_subtitles(video, subs, directory=dest_dir, language_format='alpha2')
+                for s in saved:
+                    print(f"  [✓] Saved: {base_stem}.{s.language.alpha2}.srt")
+                total_saved += len(saved)
+                # Clear any stale .nosubs marker
+                if os.path.exists(nosubs_marker):
+                    try:
+                        os.remove(nosubs_marker)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"  [!] Failed to save subtitle for {base_stem}: {e}")
+        elif query_succeeded:
+            # Search ran cleanly but found nothing — write .nosubs marker
+            print(f"  [-] No subtitles found for: {base_stem}")
+            try:
+                with open(nosubs_marker, 'w') as _f:
+                    _f.write(f"No subtitles found: {datetime.datetime.now().isoformat()}\n")
+                print(f"  -> Created marker: {os.path.basename(nosubs_marker)}")
+            except Exception:
+                pass
+        else:
+            # Query itself errored — do NOT write .nosubs so we retry next run
+            print(f"  [?] Subtitle status unknown (query error) for: {base_stem}")
+
+    return total_saved
+
 
 def process_files():
     load_config()
@@ -562,7 +609,6 @@ def process_files():
     print(f"[+] Download subtitles:         {DOWNLOAD_SUBTITLES} ({SUBTITLE_LANGUAGES})")
     providers = get_active_providers()
     print(f"[+] Subtitle providers:         {', '.join(providers) if providers else 'None'}")
-    print(f"[+] Rate-limit delay:           {SUBTITLE_DELAY}s between API requests")
 
     discovered_jf = discover_jellyfin_url()
     if discovered_jf:
@@ -579,75 +625,80 @@ def process_files():
     os.makedirs(MOVIES_DIR, exist_ok=True)
 
     new_media_linked = 0
-    new_subs_downloaded = 0
+    subtitle_pending = []  # collect all files needing subtitle lookup
 
+    # --- Phase 1: Link all media files (no network I/O) ---
     for root, dirs, files in os.walk(DOWNLOADS_DIR):
         for file in files:
-            if file.endswith(('.mkv', '.mp4', '.avi')):
-                source_path = os.path.join(root, file)
-                info = guessit(file)
-                
-                # --- HANDLE TV SHOWS ---
-                if 'title' in info and 'season' in info and 'episode' in info:
-                    show_name = str(info['title']).title()
-                    
-                    # Handle multi-episodes safely
-                    s_num = info['season'][0] if isinstance(info['season'], list) else info['season']
-                    e_num = info['episode'][0] if isinstance(info['episode'], list) else info['episode']
-                    year = info.get('year')
-                    
-                    season_folder = f"Season {s_num:02d}"
-                    ext = os.path.splitext(file)[1]
-                    
-                    # Create clean file name: "Show Name - S01E02.mkv"
-                    clean_name = f"{show_name} - S{s_num:02d}E{e_num:02d}{ext}"
-                    
-                    dest_dir = os.path.join(SHOWS_DIR, show_name, season_folder)
-                    dest_path = os.path.join(dest_dir, clean_name)
-                    
-                    os.makedirs(dest_dir, exist_ok=True)
-                    if not os.path.exists(dest_path):
-                        try:
-                            os.link(source_path, dest_path)
-                            print(f"Linked Show: {clean_name}")
-                            new_media_linked += 1
-                            new_subs_downloaded += fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
-                            cleanup_source(source_path)
-                        except Exception as e:
-                            print(f"Error linking {file}: {e}")
-                    else:
-                        print(f"Existing Show found: {clean_name}")
-                        new_subs_downloaded += fetch_subtitles(dest_path, 'episode', info, show_name=show_name, s_num=s_num, e_num=e_num, year=year)
+            if not file.endswith(('.mkv', '.mp4', '.avi')):
+                continue
 
-                # --- HANDLE MOVIES ---
-                elif 'title' in info and info.get('type') == 'movie':
-                    movie_name = str(info['title']).title()
-                    year = info.get('year', '')
-                    
-                    # Create clean folder/file name: "Movie Name (2023)"
-                    folder_name = f"{movie_name} ({year})" if year else movie_name
-                    ext = os.path.splitext(file)[1]
-                    clean_name = f"{folder_name}{ext}"
-                    
-                    dest_dir = os.path.join(MOVIES_DIR, folder_name)
-                    dest_path = os.path.join(dest_dir, clean_name)
-                    
-                    os.makedirs(dest_dir, exist_ok=True)
-                    if not os.path.exists(dest_path):
-                        try:
-                            os.link(source_path, dest_path)
-                            print(f"Linked Movie: {clean_name}")
-                            new_media_linked += 1
-                            new_subs_downloaded += fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
-                            cleanup_source(source_path)
-                        except Exception as e:
-                            print(f"Error linking {file}: {e}")
-                    else:
-                        print(f"Existing Movie found: {clean_name}")
-                        new_subs_downloaded += fetch_subtitles(dest_path, 'movie', info, movie_name=movie_name, year=year)
+            source_path = os.path.join(root, file)
+            info = guessit(file)
+
+            # TV SHOW
+            if 'title' in info and 'season' in info and 'episode' in info:
+                show_name   = str(info['title']).title()
+                s_num       = info['season'][0]  if isinstance(info['season'],   list) else info['season']
+                e_num       = info['episode'][0] if isinstance(info['episode'],  list) else info['episode']
+                year        = info.get('year')
+                season_folder = f"Season {s_num:02d}"
+                ext         = os.path.splitext(file)[1]
+                clean_name  = f"{show_name} - S{s_num:02d}E{e_num:02d}{ext}"
+                dest_dir    = os.path.join(SHOWS_DIR, show_name, season_folder)
+                dest_path   = os.path.join(dest_dir, clean_name)
+
+                os.makedirs(dest_dir, exist_ok=True)
+                if not os.path.exists(dest_path):
+                    try:
+                        os.link(source_path, dest_path)
+                        print(f"Linked Show: {clean_name}")
+                        new_media_linked += 1
+                        cleanup_source(source_path)
+                    except Exception as e:
+                        print(f"Error linking {file}: {e}")
+                        continue
                 else:
-                    # Log files that don't match movie/show patterns
-                    print(f"Skipped (unrecognized format): {file}")
+                    print(f"Existing Show: {clean_name}")
+
+                subtitle_pending.append({
+                    'dest_path': dest_path, 'media_type': 'episode', 'info': info,
+                    'show_name': show_name, 's_num': s_num, 'e_num': e_num, 'year': year,
+                })
+
+            # MOVIE
+            elif 'title' in info and info.get('type') == 'movie':
+                movie_name  = str(info['title']).title()
+                year        = info.get('year', '')
+                folder_name = f"{movie_name} ({year})" if year else movie_name
+                ext         = os.path.splitext(file)[1]
+                clean_name  = f"{folder_name}{ext}"
+                dest_dir    = os.path.join(MOVIES_DIR, folder_name)
+                dest_path   = os.path.join(dest_dir, clean_name)
+
+                os.makedirs(dest_dir, exist_ok=True)
+                if not os.path.exists(dest_path):
+                    try:
+                        os.link(source_path, dest_path)
+                        print(f"Linked Movie: {clean_name}")
+                        new_media_linked += 1
+                        cleanup_source(source_path)
+                    except Exception as e:
+                        print(f"Error linking {file}: {e}")
+                        continue
+                else:
+                    print(f"Existing Movie: {clean_name}")
+
+                subtitle_pending.append({
+                    'dest_path': dest_path, 'media_type': 'movie', 'info': info,
+                    'movie_name': movie_name, 'year': year,
+                })
+
+            else:
+                print(f"Skipped (unrecognized format): {file}")
+
+    # --- Phase 2: Batch subtitle download (single provider session for ALL files) ---
+    new_subs_downloaded = batch_fetch_subtitles(subtitle_pending)
 
     if new_media_linked > 0 or new_subs_downloaded > 0:
         print(f"\n[+] Sort summary: {new_media_linked} new media linked, {new_subs_downloaded} new subtitles downloaded.")
@@ -657,3 +708,4 @@ def process_files():
 
 if __name__ == "__main__":
     process_files()
+
