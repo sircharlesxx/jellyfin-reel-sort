@@ -58,12 +58,15 @@ try:
             )
     except Exception as _e:
         # Fallback: in-memory cache (no persistence, but fully functional)
-        try:
-            from subliminal.cache import region as _subliminal_region
-            if not _subliminal_region.is_configured:
-                _subliminal_region.configure('dogpile.cache.memory')
-        except Exception:
-            pass  # Non-fatal: subtitle downloads may still work without caching
+        from dogpile.cache import make_region
+        _subliminal_region = make_region().configure('dogpile.cache.memory')
+
+    # Silence noisy Subliminal/provider logs. Since we use 7 providers, it's completely normal 
+    # for one (like opensubtitlescom) to occasionally return 400 Bad Request or 503. 
+    # Subliminal safely catches these and tries the next provider, but by default it prints 
+    # scary tracebacks to the console. We suppress them here.
+    import logging
+    logging.getLogger("subliminal").setLevel(logging.CRITICAL)
 
     SUBLIMINAL_AVAILABLE = True
 except ImportError:
