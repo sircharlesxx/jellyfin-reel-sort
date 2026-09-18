@@ -232,6 +232,10 @@ else
     JELLYFIN_API_KEY="$INPUT_JF_KEY"
 fi
 
+echo ""
+INPUT_OS_KEY=$(prompt_with_default "Enter OpenSubtitles.com API Key (leave blank to use anonymous/default pool)" "")
+OPENSUBTITLES_API_KEY="$INPUT_OS_KEY"
+
 # 7. Installation Directory for scripts
 INPUT_INSTALL_DIR=$(prompt_with_default "Enter directory to install executable scripts" "$DEFAULT_INSTALL_DIR")
 INSTALL_DIR="${INPUT_INSTALL_DIR/#\~/$HOME}"
@@ -284,6 +288,7 @@ PYTHON_BIN="$PYTHON_BIN"
 REMOTE_NAME="$REMOTE_NAME"
 JELLYFIN_URL="$DEFAULT_JF_URL"
 JELLYFIN_API_KEY="$JELLYFIN_API_KEY"
+OPENSUBTITLES_API_KEY="$OPENSUBTITLES_API_KEY"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"
 SORTER_PATH="$INSTALL_DIR/sorter.py"
