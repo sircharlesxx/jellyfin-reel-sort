@@ -586,9 +586,17 @@ def batch_fetch_subtitles(pending):
             subs = chunk_subtitles.get(video, [])
             if subs:
                 try:
-                    saved = save_subtitles(video, subs, directory=dest_dir, language_format='alpha2')
+                    # Enforce UTF-8 encoding and fix permissions to ensure Jellyfin can read and render them properly
+                    saved = save_subtitles(video, subs, directory=dest_dir, encoding='utf-8', language_format='alpha2')
                     for s in saved:
-                        print(f"    [✓] Saved: {base_stem}.{s.language.alpha2}.srt")
+                        sub_name = f"{base_stem}.{s.language.alpha2}.srt"
+                        sub_path = os.path.join(dest_dir, sub_name)
+                        if os.path.exists(sub_path):
+                            try:
+                                os.chmod(sub_path, 0o644)
+                            except Exception:
+                                pass
+                        print(f"    [✓] Saved: {sub_name}")
                     total_saved += len(saved)
                     # Clear any stale .nosubs marker
                     if os.path.exists(nosubs_marker):
