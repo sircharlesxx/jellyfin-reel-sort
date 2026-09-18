@@ -1,11 +1,46 @@
 import os
 import sys
+import time
+import random
 import shutil
 import glob
 from guessit import guessit
 
-# Subliminal subtitle downloading imports
+# Rotate realistic desktop browser User-Agents
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+]
+
+# Subliminal subtitle downloading imports & Session Patching
 try:
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util import Retry
+
+    # Patch requests.Session to inject random User-Agent and safe retry backoff
+    _orig_session_init = requests.Session.__init__
+    def _patched_session_init(self, *args, **kwargs):
+        _orig_session_init(self, *args, **kwargs)
+        self.headers['User-Agent'] = random.choice(USER_AGENTS)
+        # Configure polite backoff on 429 Too Many Requests and 5xx errors
+        retries = Retry(
+            total=3,
+            backoff_factor=1.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            raise_on_status=False
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.mount("https://", adapter)
+        self.mount("http://", adapter)
+
+    requests.Session.__init__ = _patched_session_init
+
     from subliminal import Episode, Movie, Video, scan_video, download_best_subtitles, save_subtitles
     from babelfish import Language
     SUBLIMINAL_AVAILABLE = True
@@ -23,6 +58,7 @@ CLEANUP_MODE = os.environ.get("CLEANUP_MODE", "")  # 'delete', 'move', or 'none'
 ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "")
 DOWNLOAD_SUBTITLES = os.environ.get("DOWNLOAD_SUBTITLES", "")  # 'true' or 'false'
 SUBTITLE_LANGUAGES = os.environ.get("SUBTITLE_LANGUAGES", "")  # comma-separated codes, e.g. 'en', 'es'
+SUBTITLE_DELAY = float(os.environ.get("SUBTITLE_DELAY", "2.0"))  # Seconds to wait between API calls to avoid rate limits
 
 def parse_language(code):
     """Robustly parse any language code (2-letter, 3-letter, or IETF) into a babelfish Language object."""
@@ -154,7 +190,7 @@ def resolve_paths():
             MOVIES_DIR = found_movies if found_movies else os.path.join(MEDIA_DIR, "Movies")
 
 def load_config():
-    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_DELAY
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
             for line in f:
@@ -179,6 +215,11 @@ def load_config():
                         DOWNLOAD_SUBTITLES = val
                     elif key == "SUBTITLE_LANGUAGES" and not SUBTITLE_LANGUAGES:
                         SUBTITLE_LANGUAGES = val
+                    elif key == "SUBTITLE_DELAY":
+                        try:
+                            SUBTITLE_DELAY = float(val)
+                        except ValueError:
+                            pass
 
     # Run lazy auto-discovery for storage paths
     resolve_paths()
@@ -211,19 +252,18 @@ def cleanup_source(source_path):
             print(f"  -> Warning: Failed to move {source_path}: {e}")
 
 def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_num=None, movie_name=None, year=None):
-    """Download subtitles using subliminal and save them in Jellyfin format: MovieName.en.srt"""
+    """Download subtitles using subliminal with User-Agent rotation and polite rate limiting."""
     if not SUBLIMINAL_AVAILABLE:
         print("  -> Subliminal library not installed, skipping subtitle download.")
         return
 
     if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
-        print(f"  -> Subtitle downloading disabled by config (DOWNLOAD_SUBTITLES={DOWNLOAD_SUBTITLES}).")
         return
 
     dest_dir = os.path.dirname(dest_path)
     base_stem = os.path.splitext(os.path.basename(dest_path))[0]
 
-    # Parse configured language codes into babelfish Language objects (supports 'en', 'eng', etc.)
+    # Parse configured language codes into babelfish Language objects
     languages = set()
     for code in SUBTITLE_LANGUAGES.split(','):
         parsed = parse_language(code)
@@ -259,14 +299,14 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
     print(f"  -> Querying subtitle providers for: {base_stem} [{', '.join(l.alpha2 for l in missing_languages)}]...")
 
     try:
-        # Build Video object using subliminal's scan_video for accurate metadata and hash
+        # Build Video object using subliminal's scan_video
         video = None
         try:
             video = scan_video(dest_path)
         except Exception:
             pass
 
-        # Fallback to Episode.fromguess / Movie.fromguess if scan_video returns generic Video
+        # Fallback to Episode.fromguess / Movie.fromguess
         if media_type == 'episode':
             if not isinstance(video, Episode):
                 guess = {
@@ -288,7 +328,7 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
                     guess['year'] = int(year) if str(year).isdigit() else year
                 video = Movie.fromguess(dest_path, guess)
 
-        # Download best matching subtitles across all configured providers
+        # Download best matching subtitles
         subtitles = download_best_subtitles([video], missing_languages)
         if subtitles.get(video):
             saved = save_subtitles(video, subtitles[video], directory=dest_dir, language_format='alpha2')
@@ -296,8 +336,15 @@ def fetch_subtitles(dest_path, media_type, info, show_name=None, s_num=None, e_n
                 print(f"  [✓] Downloaded subtitle: {base_stem}.{s.language.alpha2}.srt")
         else:
             print(f"  [-] No subtitles found from online providers for '{base_stem}'.")
+
     except Exception as e:
-        print(f"  [!] Subtitle download error: {e}")
+        print(f"  [!] Subtitle query encountered error (skipping gracefully): {e}")
+
+    # Rate-limit delay between files to avoid triggering API throttling or HTTP 429
+    if SUBTITLE_DELAY > 0:
+        # Add slight jitter (e.g. 2.0s to 3.0s) so queries look natural to providers
+        sleep_time = SUBTITLE_DELAY + random.uniform(0.2, 1.0)
+        time.sleep(sleep_time)
 
 def process_files():
     load_config()
@@ -308,6 +355,7 @@ def process_files():
     if CLEANUP_MODE == 'move':
         print(f"[+] Archive directory:          {ARCHIVE_DIR}")
     print(f"[+] Download subtitles:         {DOWNLOAD_SUBTITLES} ({SUBTITLE_LANGUAGES})")
+    print(f"[+] Rate-limit delay:           {SUBTITLE_DELAY}s between API requests")
 
     if not os.path.exists(DOWNLOADS_DIR):
         print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
