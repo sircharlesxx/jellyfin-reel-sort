@@ -473,6 +473,52 @@ def cleanup_source(source_path):
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
 
+def prune_downloads_directory():
+    """When CLEANUP_MODE is 'delete', remove leftover non-media clutter (.txt, .nfo, posters, etc.)
+    and prune empty folders in DOWNLOADS_DIR once all media files have been processed."""
+    if CLEANUP_MODE != 'delete' or not DOWNLOADS_DIR or not os.path.isdir(DOWNLOADS_DIR):
+        return
+
+    MEDIA_EXTS = ('.mkv', '.mp4', '.avi')
+    CLUTTER_EXTS = (
+        '.txt', '.nfo', '.url', '.website', '.html', '.htm',
+        '.jpg', '.jpeg', '.png', '.gif', '.sfv', '.md',
+        '.idx', '.sub', '.srt', '.vtt'
+    )
+
+    clean_dl = os.path.realpath(DOWNLOADS_DIR)
+
+    # Walk bottom-up so leaf directories are cleaned and pruned before their parents
+    for root, dirs, files in os.walk(DOWNLOADS_DIR, topdown=False):
+        if os.path.realpath(root) == clean_dl:
+            continue
+
+        # Check if this folder or any of its subfolders still contain media files
+        has_media = False
+        for r, _, fs in os.walk(root):
+            if any(f.lower().endswith(MEDIA_EXTS) for f in fs):
+                has_media = True
+                break
+
+        if not has_media:
+            # All media in this folder has been processed/deleted; clean up remaining clutter
+            for f in files:
+                if f.lower().endswith(CLUTTER_EXTS):
+                    file_path = os.path.join(root, f)
+                    try:
+                        os.remove(file_path)
+                        print(f"  -> Deleted leftover file: {f}")
+                    except Exception:
+                        pass
+
+            # Prune directory if now empty
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+                    print(f"  -> Pruned empty folder: {root}")
+            except Exception:
+                pass
+
 def sanitize_srt_file(filepath):
     """Clean and standardize an SRT file: strip BOM, ensure UTF-8, normalize CRLF line endings.
 
@@ -982,6 +1028,9 @@ def process_files():
 
     # --- Phase 2: Batch subtitle download (single provider session for ALL files) ---
     new_subs_downloaded = batch_fetch_subtitles(subtitle_pending)
+
+    # Clean up leftover clutter files (.txt, .nfo, images) and empty directories
+    prune_downloads_directory()
 
     if new_media_linked > 0 or new_subs_downloaded > 0:
         print(f"\n[+] Sort summary: {new_media_linked} new media linked, {new_subs_downloaded} new subtitles downloaded.")
