@@ -6,6 +6,13 @@ import shutil
 import glob
 from guessit import guessit
 
+# =============================================================================
+# QUICK TOGGLE: Set to 0 to disable subtitle downloading entirely.
+# The script will still sort and link all media normally — just skip subs.
+# Set back to 1 when ready to re-enable.
+# =============================================================================
+ENABLE_SUBTITLES = 1
+
 # Rotate realistic desktop browser User-Agents
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -644,6 +651,8 @@ def batch_fetch_subtitles(pending):
         dest_path, media_type, info, show_name, s_num, e_num, movie_name, year
     Returns: int — total subtitle files saved
     """
+    if not ENABLE_SUBTITLES:
+        return 0
     if not SUBLIMINAL_AVAILABLE:
         return 0
     if DOWNLOAD_SUBTITLES.lower() not in ("true", "1", "yes"):
@@ -813,7 +822,8 @@ def process_files():
 
     # Automatically sanitize all existing .srt files in media directories
     # (strips UTF-8 BOM, fixes CRLF line endings, ensures 0644 permissions)
-    sanitize_all_existing_subtitles()
+    if ENABLE_SUBTITLES:
+        sanitize_all_existing_subtitles()
 
     new_media_linked = 0
     subtitle_pending = []  # collect all files needing subtitle lookup
