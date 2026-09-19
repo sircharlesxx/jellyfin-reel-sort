@@ -444,16 +444,32 @@ def cleanup_source(source_path):
     """Safely remove or archive the source file after successful linking."""
     if CLEANUP_MODE == 'delete':
         try:
-            os.remove(source_path)
-            print(f"  -> Deleted source: {source_path}")
+            if os.path.exists(source_path):
+                os.remove(source_path)
+                print(f"  -> Deleted source: {source_path}")
+                # Prune empty parent folders inside DOWNLOADS_DIR
+                if DOWNLOADS_DIR and os.path.isdir(DOWNLOADS_DIR):
+                    clean_downloads = os.path.realpath(DOWNLOADS_DIR)
+                    parent = os.path.dirname(source_path)
+                    while parent and os.path.realpath(parent) != clean_downloads:
+                        try:
+                            if os.path.isdir(parent) and not os.listdir(parent):
+                                os.rmdir(parent)
+                                print(f"  -> Pruned empty folder: {parent}")
+                                parent = os.path.dirname(parent)
+                            else:
+                                break
+                        except Exception:
+                            break
         except Exception as e:
             print(f"  -> Warning: Failed to delete {source_path}: {e}")
             
     elif CLEANUP_MODE == 'move':
         try:
-            os.makedirs(ARCHIVE_DIR, exist_ok=True)
-            shutil.move(source_path, ARCHIVE_DIR)
-            print(f"  -> Moved source to archive: {source_path}")
+            if os.path.exists(source_path):
+                os.makedirs(ARCHIVE_DIR, exist_ok=True)
+                shutil.move(source_path, ARCHIVE_DIR)
+                print(f"  -> Moved source to archive: {source_path}")
         except Exception as e:
             print(f"  -> Warning: Failed to move {source_path}: {e}")
 
@@ -883,6 +899,8 @@ def process_files():
                         continue
                 else:
                     print(f"Existing Show: {clean_name}")
+                    if CLEANUP_MODE in ('delete', 'move'):
+                        cleanup_source(source_path)
 
                 # Check if download package already included a matching subtitle
                 inc_sub = find_accompanying_subtitles(root, file, s_num=s_num, e_num=e_num)
@@ -899,6 +917,9 @@ def process_files():
                             cleanup_source(inc_sub)
                         except Exception as e:
                             print(f"  [!] Failed to link included subtitle: {e}")
+                    else:
+                        if CLEANUP_MODE in ('delete', 'move'):
+                            cleanup_source(inc_sub)
 
                 subtitle_pending.append({
                     'dest_path': dest_path, 'media_type': 'episode', 'info': info,
@@ -928,6 +949,8 @@ def process_files():
                         continue
                 else:
                     print(f"Existing Movie: {clean_name}")
+                    if CLEANUP_MODE in ('delete', 'move'):
+                        cleanup_source(source_path)
 
                 # Check if download package already included a matching subtitle
                 inc_sub = find_accompanying_subtitles(root, file)
@@ -944,6 +967,9 @@ def process_files():
                             cleanup_source(inc_sub)
                         except Exception as e:
                             print(f"  [!] Failed to link included subtitle: {e}")
+                    else:
+                        if CLEANUP_MODE in ('delete', 'move'):
+                            cleanup_source(inc_sub)
 
                 subtitle_pending.append({
                     'dest_path': dest_path, 'media_type': 'movie', 'info': info,
