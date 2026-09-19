@@ -1,7 +1,25 @@
 #!/bin/bash
 
-# Configuration file support
-CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-/etc/jellyfin-reel-sort.conf}"
+# Configuration file support — search in priority order:
+#   1. Explicit env var (e.g. set in crontab)
+#   2. /etc system-wide config
+#   3. Any user's ~/.config/jellyfin-reel-sort.conf (handles sudo runs)
+CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-}"
+
+if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
+    if [ -f "/etc/jellyfin-reel-sort.conf" ]; then
+        CONFIG_FILE="/etc/jellyfin-reel-sort.conf"
+    else
+        # Search all real user home directories for the config
+        for homedir in /home/*/; do
+            candidate="$homedir.config/jellyfin-reel-sort.conf"
+            if [ -f "$candidate" ]; then
+                CONFIG_FILE="$candidate"
+                break
+            fi
+        done
+    fi
+fi
 
 if [ -f "$CONFIG_FILE" ]; then
     # shellcheck source=/dev/null
