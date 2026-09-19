@@ -468,6 +468,78 @@ def record_synced_file(source_path):
     except Exception:
         pass
 
+def prune_exclude_list():
+    """Sync exclude_list.txt against the actual Jellyfin library:
+    If a show or movie no longer exists in Shows/ or Movies/ (e.g. user deleted it
+    from their media folder), remove it from exclude_list.txt so it can be re-downloaded
+    if re-added to Put.io."""
+    load_config()
+    candidates = [
+        os.environ.get("EXCLUDE_FILE"),
+        os.path.expanduser("~/.local/state/jellyfin-reel-sort/exclude_list.txt"),
+    ]
+    for h in sorted(glob.glob("/home/*/.local/state/jellyfin-reel-sort/exclude_list.txt")):
+        candidates.append(h)
+
+    exclude_file = None
+    for c in candidates:
+        if c and os.path.isfile(c):
+            exclude_file = c
+            break
+
+    if not exclude_file or not os.path.isfile(exclude_file):
+        return
+
+    try:
+        with open(exclude_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+    except Exception:
+        return
+
+    kept_lines = []
+    pruned_count = 0
+
+    for line in lines:
+        clean_line = line.strip()
+        if not clean_line or clean_line.startswith("#"):
+            kept_lines.append(line)
+            continue
+
+        info = guessit(clean_line)
+        exists = False
+
+        if 'title' in info and 'season' in info and 'episode' in info:
+            s_name = str(info['title']).title()
+            s_num = info['season'][0] if isinstance(info['season'], list) else info['season']
+            e_num = info['episode'][0] if isinstance(info['episode'], list) else info['episode']
+            pattern = os.path.join(SHOWS_DIR, s_name, f"Season {s_num:02d}", f"{s_name} - S{s_num:02d}E{e_num:02d}.*")
+            if glob.glob(pattern):
+                exists = True
+        elif 'title' in info and info.get('type') == 'movie':
+            m_name = str(info['title']).title()
+            year = info.get('year', '')
+            f_name = f"{m_name} ({year})" if year else m_name
+            pattern = os.path.join(MOVIES_DIR, f_name, f"{f_name}.*")
+            if glob.glob(pattern):
+                exists = True
+        else:
+            # If we cannot parse it, keep it in the list to be safe
+            exists = True
+
+        if exists:
+            kept_lines.append(line)
+        else:
+            pruned_count += 1
+            print(f"  [+] Un-excluded (deleted from Jellyfin): {os.path.basename(clean_line)}")
+
+    if pruned_count > 0:
+        try:
+            with open(exclude_file, "w", encoding="utf-8") as f:
+                f.writelines(kept_lines)
+            print(f"[+] Exclusion list: Removed {pruned_count} deleted title(s) to allow re-downloading.")
+        except Exception as e:
+            print(f"  [!] Failed to update exclusion list: {e}")
+
 def cleanup_source(source_path):
     """Safely remove or archive the source file after successful linking."""
     record_synced_file(source_path)
@@ -1106,5 +1178,8 @@ def process_files():
         print("\n[+] Sort summary: No new media or subtitles added.")
 
 if __name__ == "__main__":
-    process_files()
+    if len(sys.argv) > 1 and sys.argv[1] == "--prune-excludes":
+        prune_exclude_list()
+    else:
+        process_files()
 

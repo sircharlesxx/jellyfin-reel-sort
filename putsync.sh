@@ -85,6 +85,10 @@ trap cleanup EXIT INT TERM
 
   echo "--- Starting $REMOTE_NAME copy job at $(date) ---" >> "$LOG_FILE"
 
+  # Sync exclusion list with Jellyfin library before copy:
+  # If a title was deleted from Jellyfin, un-exclude it so it can be re-downloaded
+  "$PY_CMD" "$SORTER_SCRIPT" --prune-excludes >> "$LOG_FILE" 2>&1 || true
+
   if command -v rclone > /dev/null 2>&1; then
     rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
       --progress \
