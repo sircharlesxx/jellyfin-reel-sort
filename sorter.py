@@ -440,8 +440,37 @@ def load_config():
     if not SUBTITLE_LANGUAGES:
         SUBTITLE_LANGUAGES = "en"
 
+def record_synced_file(source_path):
+    """Record a processed file to exclude_list.txt so rclone will never re-download it."""
+    try:
+        if not DOWNLOADS_DIR:
+            return
+        rel = os.path.relpath(source_path, DOWNLOADS_DIR).replace("\\", "/")
+        candidates = [
+            os.environ.get("EXCLUDE_FILE"),
+            os.path.expanduser("~/.local/state/jellyfin-reel-sort/exclude_list.txt"),
+        ]
+        for h in sorted(glob.glob("/home/*/.local/state/jellyfin-reel-sort/exclude_list.txt")):
+            candidates.append(h)
+        for c in candidates:
+            if c:
+                os.makedirs(os.path.dirname(c), exist_ok=True)
+                entry = f"/{rel}\n"
+                already = False
+                if os.path.isfile(c):
+                    with open(c, "r", encoding="utf-8", errors="ignore") as f:
+                        if entry in f:
+                            already = True
+                if not already:
+                    with open(c, "a", encoding="utf-8") as f:
+                        f.write(entry)
+                break
+    except Exception:
+        pass
+
 def cleanup_source(source_path):
     """Safely remove or archive the source file after successful linking."""
+    record_synced_file(source_path)
     if CLEANUP_MODE == 'delete':
         try:
             if os.path.exists(source_path):
