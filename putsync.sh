@@ -54,10 +54,6 @@ LOCAL_PATH="${DOWNLOADS_DIR:-/home/mariofishy/Jellyfin/downloads/}"
 LOG_FILE="${LOG_FILE:-/var/log/jellyfin-reel-sort.log}"
 LOCK_FILE="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
 SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
-EXCLUDE_FILE="${EXCLUDE_FILE:-${CONFIG_OWNER_HOME}/.local/state/jellyfin-reel-sort/exclude_list.txt}"
-mkdir -p "$(dirname "$EXCLUDE_FILE")" 2>/dev/null || true
-touch "$EXCLUDE_FILE" 2>/dev/null || true
-export EXCLUDE_FILE
 
 # Resolve Python interpreter — check config's venv first, then system python3
 if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
@@ -85,14 +81,9 @@ trap cleanup EXIT INT TERM
 
   echo "--- Starting $REMOTE_NAME copy job at $(date) ---" >> "$LOG_FILE"
 
-  # Sync exclusion list with Jellyfin library before copy:
-  # If a title was deleted from Jellyfin, un-exclude it so it can be re-downloaded
-  "$PY_CMD" "$SORTER_SCRIPT" --prune-excludes >> "$LOG_FILE" 2>&1 || true
-
   if command -v rclone > /dev/null 2>&1; then
     rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
       --progress \
-      --exclude-from "$EXCLUDE_FILE" \
       --log-file="$LOG_FILE"
 
     # Fix ownership so the downloads folder owner can read files even
