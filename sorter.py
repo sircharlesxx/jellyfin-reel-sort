@@ -374,10 +374,25 @@ def resolve_paths():
             found_movies = discover_directory(movies_candidates, "movies")
             MOVIES_DIR = found_movies if found_movies else os.path.join(MEDIA_DIR, "Movies")
 
+def find_config_file():
+    """Find configuration file across environment, /etc, or user home directories."""
+    candidates = [
+        os.environ.get("JELLYFIN_SORT_CONFIG"),
+        "/etc/jellyfin-reel-sort.conf",
+        os.path.expanduser("~/.config/jellyfin-reel-sort.conf"),
+    ]
+    for h in sorted(glob.glob("/home/*/.config/jellyfin-reel-sort.conf")):
+        candidates.append(h)
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
 def load_config():
     global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY, JELLYFIN_URL, JELLYFIN_API_KEY
-    if os.path.isfile(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
+    cfg_file = find_config_file()
+    if cfg_file and os.path.isfile(cfg_file):
+        with open(cfg_file, "r") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -836,6 +851,13 @@ def process_files():
 
             source_path = os.path.join(root, file)
             info = guessit(file)
+            # If the filename itself lacks a title (e.g. S01E01.mkv inside a named folder),
+            # re-run guessit with the relative path to extract title from parent directories
+            if 'title' not in info or ('season' not in info and 'episode' not in info and info.get('type') != 'movie'):
+                rel_path = os.path.relpath(source_path, DOWNLOADS_DIR)
+                rel_info = guessit(rel_path)
+                if 'title' in rel_info:
+                    info = rel_info
 
             # TV SHOW
             if 'title' in info and 'season' in info and 'episode' in info:

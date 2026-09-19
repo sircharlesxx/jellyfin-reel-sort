@@ -22,8 +22,11 @@ if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 if [ -f "$CONFIG_FILE" ]; then
+    export JELLYFIN_SORT_CONFIG="$CONFIG_FILE"
+    set -a
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+    set +a
     # Derive the config owner's home dir for venv resolution below
     CONFIG_OWNER_HOME="$(dirname "$(dirname "$CONFIG_FILE")")"
 else
