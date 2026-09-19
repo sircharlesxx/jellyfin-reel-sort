@@ -973,7 +973,16 @@ def process_files():
                         print(f"Error linking {file}: {e}")
                         continue
                 else:
-                    print(f"Existing Show: {clean_name}")
+                    try:
+                        if not os.path.samefile(source_path, dest_path):
+                            os.remove(dest_path)
+                            os.link(source_path, dest_path)
+                            print(f"Re-linked Show: {clean_name}")
+                            new_media_linked += 1
+                        else:
+                            print(f"Existing Show: {clean_name}")
+                    except Exception as e:
+                        print(f"Existing Show: {clean_name}")
                     if CLEANUP_MODE in ('delete', 'move'):
                         cleanup_source(source_path)
 
@@ -993,6 +1002,16 @@ def process_files():
                         except Exception as e:
                             print(f"  [!] Failed to link included subtitle: {e}")
                     else:
+                        try:
+                            if not os.path.samefile(inc_sub, dest_sub):
+                                os.remove(dest_sub)
+                                try:
+                                    os.link(inc_sub, dest_sub)
+                                except Exception:
+                                    shutil.copy2(inc_sub, dest_sub)
+                                sanitize_srt_file(dest_sub)
+                        except Exception:
+                            pass
                         if CLEANUP_MODE in ('delete', 'move'):
                             cleanup_source(inc_sub)
 
@@ -1023,7 +1042,16 @@ def process_files():
                         print(f"Error linking {file}: {e}")
                         continue
                 else:
-                    print(f"Existing Movie: {clean_name}")
+                    try:
+                        if not os.path.samefile(source_path, dest_path):
+                            os.remove(dest_path)
+                            os.link(source_path, dest_path)
+                            print(f"Re-linked Movie: {clean_name}")
+                            new_media_linked += 1
+                        else:
+                            print(f"Existing Movie: {clean_name}")
+                    except Exception as e:
+                        print(f"Existing Movie: {clean_name}")
                     if CLEANUP_MODE in ('delete', 'move'):
                         cleanup_source(source_path)
 
@@ -1043,6 +1071,16 @@ def process_files():
                         except Exception as e:
                             print(f"  [!] Failed to link included subtitle: {e}")
                     else:
+                        try:
+                            if not os.path.samefile(inc_sub, dest_sub):
+                                os.remove(dest_sub)
+                                try:
+                                    os.link(inc_sub, dest_sub)
+                                except Exception:
+                                    shutil.copy2(inc_sub, dest_sub)
+                                sanitize_srt_file(dest_sub)
+                        except Exception:
+                            pass
                         if CLEANUP_MODE in ('delete', 'move'):
                             cleanup_source(inc_sub)
 
