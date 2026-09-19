@@ -3,7 +3,7 @@
 # Configuration file support — search in priority order:
 #   1. Explicit env var (e.g. set in crontab)
 #   2. /etc system-wide config
-#   3. Any user's ~/.config/jellyfin-reel-sort.conf (handles sudo runs)
+#   3. Any user's ~/.config/jellyfin-reel-sort.conf (handles sudo/root runs)
 CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-}"
 
 if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
@@ -24,11 +24,15 @@ fi
 if [ -f "$CONFIG_FILE" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+    # Derive the config owner's home dir for venv resolution below
+    CONFIG_OWNER_HOME="$(dirname "$(dirname "$CONFIG_FILE")")"
+else
+    CONFIG_OWNER_HOME="$HOME"
 fi
 
 # Lazy auto-detection for rclone remote if not explicitly specified
 if [ -z "$REMOTE_NAME" ]; then
-    if command -v rclone >/dev/null 2>&1; then
+    if command -v rclone > /dev/null 2>&1; then
         # Check if 'put.io' exists, or any remote with 'put' in it, or use the first available remote
         while IFS= read -r rem; do
             clean_rem="${rem%:}"
@@ -43,33 +47,38 @@ if [ -z "$REMOTE_NAME" ]; then
 fi
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
 
-LOCAL_PATH="${DOWNLOADS_DIR:-$HOME/Jellyfin/downloads/}"
-LOG_FILE="${LOG_FILE:-/var/log/rclone_putio_copy.log}"
-LOCK_FILE="${LOCK_FILE:-/tmp/rclone_putio.lock}"
+LOCAL_PATH="${DOWNLOADS_DIR:-/home/mariofishy/Jellyfin/downloads/}"
+LOG_FILE="${LOG_FILE:-/var/log/jellyfin-reel-sort.log}"
+LOCK_FILE="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
 SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
 
-# Resolve Python interpreter (prioritizes config/venv)
+# Resolve Python interpreter — check config's venv first, then system python3
 if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
     PY_CMD="$PYTHON_BIN"
-elif [ -x "$HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ]; then
-    PY_CMD="$HOME/.local/share/jellyfin-reel-sort/venv/bin/python3"
+elif [ -x "$CONFIG_OWNER_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ]; then
+    PY_CMD="$CONFIG_OWNER_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3"
 else
     PY_CMD="$(command -v python3)"
 fi
 
-# Ensure log dir exists if writable
+# Ensure log dir exists
 LOG_DIR="$(dirname "$LOG_FILE")"
-if [ ! -d "$LOG_DIR" ] && [ -w "$(dirname "$LOG_DIR")" ]; then
-    mkdir -p "$LOG_DIR"
-fi
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+# Clean up lock file on exit (normal, error, or signal) so stale locks
+# owned by root never block future runs
+cleanup() {
+    rm -f "$LOCK_FILE"
+}
+trap cleanup EXIT INT TERM
 
 # Prevent script from running more than once concurrently
 (
-  flock -n 200 || exit 1
+  flock -n 200 || { echo "Already running — exiting." >> "$LOG_FILE"; exit 1; }
 
   echo "--- Starting $REMOTE_NAME copy job at $(date) ---" >> "$LOG_FILE"
 
-  if command -v rclone >/dev/null 2>&1; then
+  if command -v rclone > /dev/null 2>&1; then
     rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
       --progress \
       --log-file="$LOG_FILE"
@@ -80,9 +89,8 @@ fi
   echo "--- Copy job finished at $(date) ---" >> "$LOG_FILE"
   echo "" >> "$LOG_FILE"
 
-  echo "--- Starting blind sort and hardlink at $(date) ---" >> "$LOG_FILE"
+  echo "--- Starting sort and hardlink at $(date) ---" >> "$LOG_FILE"
 
-  # Run python sorter using resolved Python executable
   "$PY_CMD" "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
 
   echo "--- Copy and Sort jobs finished at $(date) ---" >> "$LOG_FILE"
