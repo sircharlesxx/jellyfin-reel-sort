@@ -81,11 +81,10 @@ trap cleanup EXIT INT TERM
   if command -v rclone > /dev/null 2>&1; then
     rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
       --progress \
-      --file-perms 0644 \
-      --dir-perms 0755 \
       --log-file="$LOG_FILE"
 
-    # Fix ownership so mariofishy can read files even when rclone ran as root
+    # Fix ownership so the downloads folder owner can read files even
+    # when rclone ran as root (works on any rclone version)
     MEDIA_OWNER="$(stat -c '%U' "$LOCAL_PATH" 2>/dev/null || echo '')"
     if [ -n "$MEDIA_OWNER" ] && [ "$MEDIA_OWNER" != "root" ]; then
       chown -R "$MEDIA_OWNER" "$LOCAL_PATH" 2>/dev/null || true
