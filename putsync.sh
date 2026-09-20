@@ -134,7 +134,18 @@ log() {
     fi
 }
 
-# 4. Ingest new downloads from Put.io with Checkpointing & Resilience
+# 4. Network Warm-Up & Thermal Cool-Off (Cellular / 5G Optimization)
+# Runs a quick 5-second download to trigger carrier aggregation, logs the speed, 
+# then sleeps for 2 minutes to let the modem cool down before the heavy sync begins.
+log "=== Running 5-second network warm-up / speed test ==="
+SPEED_BPS=$(curl -o /dev/null -s -w "%{speed_download}" -m 5 http://speedtest.chicago.linode.com/100MB-chicago.bin || echo "0")
+SPEED_MBPS=$(awk -v bps="$SPEED_BPS" 'BEGIN { printf "%.2f", (bps * 8) / 1000000 }')
+log "Warm-up speed: ${SPEED_MBPS} Mbps"
+
+log "=== Cooling off modem for 2 minutes to prevent thermal throttling ==="
+sleep 120
+
+# 5. Ingest new downloads from cloud with Checkpointing & Resilience
 log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
 mkdir -p "$DOWNLOADS_DIR"
 
