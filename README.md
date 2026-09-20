@@ -171,6 +171,56 @@ To run every 30 minutes automatically, add this entry to `crontab -e`:
 
 ---
 
+## Setup & Verification Checklist
+
+Follow these steps to complete and verify your setup end-to-end:
+
+### 1. Update Repository on Host / NAS
+```bash
+cd ~/jellyfin-reel-sort
+git pull
+```
+
+### 2. First-Time Jellyfin Web Setup
+1. Open your browser and navigate to:
+   ```text
+   http://<YOUR-NAS-IP>:8096
+   ```
+2. Complete the initial user and password setup.
+3. When prompted to **Add Media Libraries**:
+   - Click **Add Media Library** → Content type: **Movies** → Add folder: `+/media/Movies`
+   - Click **Add Media Library** → Content type: **Shows** (or Series) → Add folder: `+/media/Shows`
+   > [!IMPORTANT]
+   > Select `/media/Movies` and `/media/Shows` directly inside the Docker container mount; do not use `/home/...`.
+4. Finish the wizard and log into the web UI.
+
+### 3. (Recommended) Enable Auto-Refresh API Key
+Enable automatic library refreshes when media is sorted or deleted:
+1. In the Jellyfin web UI, go to **Administration → Dashboard → API Keys**.
+2. Click **+** to generate a new API key named `reel-sort`.
+3. Add the key to `~/.config/jellyfin-reel-sort.conf`:
+   ```bash
+   JELLYFIN_API_KEY="your-api-key-here"
+   ```
+
+### 4. Run a Test Sync
+Verify the ingest pipeline manually in your terminal:
+```bash
+~/jellyfin-reel-sort/putsync.sh
+```
+Or test downloading and sorting a specific movie interactively:
+```bash
+~/jellyfin-reel-sort/get_movie.sh
+```
+
+### 5. Automated Crontab Schedule
+To run background syncs automatically every 5 minutes, add this line to your root crontab (`sudo crontab -e`):
+```cron
+*/5 * * * * /home/mariofishy/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
+```
+
+---
+
 ## Helper Utilities & Setup Tools
 
 ### Jellyfin Docker Setup (`jellyfin-docker-setup.sh`)

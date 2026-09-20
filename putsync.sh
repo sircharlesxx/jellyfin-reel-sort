@@ -2,6 +2,14 @@
 
 # ==============================================================================
 # Jellyfin Reel Sort — Main Put.io Ingest & Sort Pipeline
+#
+# Standardized Automated Pipeline:
+#   1. Lock & Concurrency: Prevents overlapping runs via non-blocking flock.
+#   2. User & Config: Automatically targets user (mariofishy) & loads ~/.config.
+#   3. Cloud Ingest: rclone copy from Put.io remote to ~/Jellyfin/downloads/.
+#   4. Permission Management: Fixes ownership for mariofishy on root cron runs.
+#   5. Media Hardlink & Sort: Runs sorter.py to link into Shows/ and Movies/.
+#   6. Library Notification: Signals Jellyfin to scan for newly organized media.
 # ==============================================================================
 
 # 1. Prevent concurrent runs using non-blocking lock
