@@ -86,11 +86,10 @@ mkdir -p "$DOWNLOADS_DIR"
 # - Sequential transfer (--transfers 1): commits one file at a time; completed files act as checkpoints
 # - Size ordering (--order-by size,asc): finishes smaller files first so they are immediately preserved
 # - Pre-flight check (--check-first): fast-skips all completed files in memory before queueing
-# - Multi-stream chunks (--multi-thread-streams 4): parallel chunk downloads for speed and stream stability
+# - Multi-stream chunks (--multi-thread-streams 8): parallel chunk downloads for speed and stream stability
 # - Deep retries (--retries 10, --low-level-retries 20): automatically recovers from network drops
-# - Atomic partial suffix (--partial-suffix .partial): incomplete downloads won't be treated as complete
 SYNC_TRANSFERS="${SYNC_TRANSFERS:-1}"
-SYNC_STREAMS="${SYNC_STREAMS:-4}"
+SYNC_STREAMS="${SYNC_STREAMS:-8}"
 SYNC_RETRIES="${SYNC_RETRIES:-10}"
 SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
 

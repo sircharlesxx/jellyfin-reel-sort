@@ -287,6 +287,8 @@ JELLYFIN_API_KEY="$JELLYFIN_API_KEY"
 LOG_FILE="$HOME/.local/state/jellyfin-reel-sort/sync.log"
 LOCK_FILE="/tmp/jellyfin_reel_sort.lock"
 SORTER_PATH="$INSTALL_DIR/sorter.py"
+SYNC_TRANSFERS="1"
+SYNC_STREAMS="8"
 CONF_EOF
 
 # Copy scripts to INSTALL_DIR
