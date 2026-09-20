@@ -41,9 +41,11 @@ flowchart LR
 
 ## 🤯 The Magic of "Zero-Space" Hardlinks
 
-Normally, if you download a 10GB movie and then copy it to your `Movies` folder, you just used **20GB** of space! 
+When managing media, you usually have two bad options:
+1. **Move the file** into your library, which breaks your cloud sync client (it will just try to download it again because it's missing from the downloads folder!).
+2. **Copy the file** into your library, which doubles your storage space (a 10GB movie becomes 20GB).
 
-We use a neat trick called **Hardlinking**. Think of it like a magical portal. 
+We built Reel Sort to use a neat filesystem trick called **Hardlinking** to solve this. Think of it like a magical portal. 
 
 ```mermaid
 flowchart TD
@@ -54,17 +56,18 @@ flowchart TD
     Movies["📂 Movies Folder\n(My Movie (2024).mkv)"] -.->|Points to| Video
 ```
 
-- 📉 **Saves Space:** Both folders look at the exact same file. A 10GB movie only takes up 10GB total!
-- ✨ **Looks Beautiful:** Jellyfin sees a perfectly named file (e.g., `Inception (2010).mkv`), while the messy original file stays in your downloads folder.
+- 📉 **Saves Space:** Both folders look at the exact same physical data on the drive. A 10GB movie only takes up 10GB total, even though it appears in two places!
+- 🤝 **Keeps Cloud Sync Happy:** Your messy original file stays safely in the `downloads/` folder. This means when the auto-sync runs, it instantly recognizes the file is already there and skips it in milliseconds.
+- ✨ **Looks Beautiful:** Jellyfin sees a perfectly named, organized file (e.g., `Movies/Inception (2010)/Inception (2010).mkv`), keeping your library clean.
 
 ---
 
-## ⚡ Supercharged Downloading (Built for 5G)
+## ⚡ Supercharged Downloading (Built for Modern Networks)
 
-Whether you are on home broadband or a cellular 5G connection, we've tuned the downloads to be incredibly fast and resilient.
+Why download files normally when you can download them *faster* and *safer*? We've engineered the sync pipeline to maximize throughput on any connection—whether you are on gigabit fiber, a flaky cellular network, or standard home broadband.
 
-- **Fast:** We split a single movie into **8 separate puzzle pieces** and download them all at the same time. This tricks 5G networks into giving you maximum speed (up to 240 Mbps)!
-- **Safe:** If your internet drops or the power goes out, you never lose progress. Completed files are permanently saved like a checkpoint.
+- **The Need for Speed (Multi-Streaming):** Standard downloads pull a file using a single stream, which often idles at a fraction of your total bandwidth. We split every single movie into **8 separate puzzle pieces** and download them simultaneously. This forces your network to give you maximum throughput, turning a slow 30 Mbps crawl into a 240+ Mbps sprint!
+- **The Need for Safety (Checkpointing):** Have you ever downloaded 99% of a huge 4K movie, only for the internet to drop and lose everything? We designed Reel Sort to download exactly **1 file at a time**. Once a file finishes, it is permanently locked in. If the power goes out or the connection drops, the script simply resumes from the next file. No wasted bandwidth, no lost progress.
 
 ---
 
