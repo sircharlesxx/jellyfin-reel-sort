@@ -66,7 +66,7 @@ flowchart TD
 
 Why download files normally when you can download them *faster* and *safer*? We've engineered the sync pipeline to maximize throughput on any connection—whether you are on gigabit fiber, a flaky cellular network, or standard home broadband.
 
-- **The Need for Speed (Multi-Streaming):** Standard downloads pull a file using a single stream, which often idles at a fraction of your total bandwidth. We split every single movie into **8 separate puzzle pieces** and download them simultaneously. This forces your network to give you maximum throughput, turning a slow 30 Mbps crawl into a 240+ Mbps sprint!
+- **The Need for Speed (Parallel Multi-Streaming):** Standard downloads pull a file sequentially over a single TCP connection, which often fails to saturate high-bandwidth links due to window sizing limits or carrier-level traffic shaping. To solve this, we utilize **concurrent HTTP Range requests**. By splitting large media files and opening 8 parallel streams simultaneously, we force network load balancers and carriers to allocate maximum available bandwidth, allowing you to easily saturate gigabit fiber or 5G Ultra Wideband links.
 - **The Need for Safety (Checkpointing):** Have you ever downloaded 99% of a huge 4K movie, only for the internet to drop and lose everything? We designed Reel Sort to download exactly **1 file at a time**. Once a file finishes, it is permanently locked in. If the power goes out or the connection drops, the script simply resumes from the next file. No wasted bandwidth, no lost progress.
 
 ---
@@ -147,7 +147,7 @@ Want to peek under the hood? You can edit `~/.config/jellyfin-reel-sort.conf` to
 | :--- | :--- | :--- |
 | `DOWNLOADS_DIR` | Where raw downloads land | `~/Jellyfin/downloads/` |
 | `MEDIA_DIR` | Where Jellyfin looks for media | `~/Jellyfin/media/` |
-| `SYNC_STREAMS` | How many puzzle pieces to split downloads into (higher = faster) | `8` |
+| `SYNC_STREAMS` | Number of concurrent HTTP Range streams per file (higher = saturates more bandwidth) | `8` |
 | `CLEANUP_MODE` | Should we delete the raw download after linking? (`none`, `delete`, or `move`) | `none` (saves the file for seeding) |
 | `DOWNLOAD_SUBTITLES` | Automatically fetch subtitles for your media? | `true` |
 
