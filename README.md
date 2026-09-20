@@ -23,14 +23,18 @@ That's exactly what **Jellyfin Reel Sort** does. 🍿
 
 Here is the journey of your media, from the cloud directly to your TV screen:
 
-```mermaid
-flowchart LR
-    Cloud(("☁️\nCloud Storage\n(e.g., Put.io)")) -->|1. Downloads| Ingest[/"📥\nDownloads Folder"/]
-    Ingest -->|2. Sorts & Links| Magic{"🪄\nReel Sort\nMagic"}
-    Magic -->|TV Shows| Shows[/"📺\nTV Shows Folder"/]
-    Magic -->|Movies| Movies[/"🎬\nMovies Folder"/]
-    Shows --> JF{"🍿\nJellyfin Server"}
-    Movies --> JF
+```text
+☁️ Cloud Storage (e.g., Put.io)
+       │
+       ▼  (1. Downloads)
+       │
+📥 Downloads Folder
+       │
+       ▼  (2. Sorts & Links)
+       │
+🪄 Reel Sort Magic
+       ├──► 📺 TV Shows Folder ──► 🍿 Jellyfin Server
+       └──► 🎬 Movies Folder   ──► 🍿 Jellyfin Server
 ```
 
 1. **Downloads:** We securely pull your files from the cloud to your local `downloads` folder.
@@ -47,13 +51,13 @@ When managing media, you usually have two bad options:
 
 We built Reel Sort to use a neat filesystem trick called **Hardlinking** to solve this. Think of it like a magical portal. 
 
-```mermaid
-flowchart TD
-    subgraph Disk["Your Hard Drive"]
-        Video["10 GB Movie Data"]
-    end
-    Downloads["📂 Downloads Folder\n(Movie_Release_XviD.mkv)"] -.->|Points to| Video
-    Movies["📂 Movies Folder\n(My Movie (2024).mkv)"] -.->|Points to| Video
+```text
+                  [ Your Hard Drive ]
+                 📀 10 GB Movie Data
+                      ▲       ▲
+         (Points to)  │       │  (Points to)
+                      │       │
+📂 downloads/Movie_Release.mkv    📂 Movies/My Movie (2024).mkv
 ```
 
 - 📉 **Saves Space:** Both folders look at the exact same physical data on the drive. A 10GB movie only takes up 10GB total, even though it appears in two places!
