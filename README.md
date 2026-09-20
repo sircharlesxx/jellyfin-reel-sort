@@ -217,7 +217,7 @@ Or test downloading and sorting a specific movie interactively:
 ### 5. Automated Crontab Schedule
 To run background syncs automatically every 5 minutes, add this line to your root crontab (`sudo crontab -e`):
 ```cron
-*/5 * * * * /home/mariofishy/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
+*/5 * * * * /home/<username>/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
 ```
 
 ---

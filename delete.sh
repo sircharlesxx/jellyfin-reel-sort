@@ -36,7 +36,42 @@ fi
 if [ -f "$CONFIG_FILE" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+    CONFIG_OWNER_HOME="$(dirname "$(dirname "$CONFIG_FILE")")"
+else
+    CONFIG_OWNER_HOME="$HOME"
 fi
+
+SOURCE_FILE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_FILE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE_FILE")" && pwd)"
+    SOURCE_FILE="$(readlink "$SOURCE_FILE")"
+    [[ $SOURCE_FILE != /* ]] && SOURCE_FILE="$DIR/$SOURCE_FILE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE_FILE")" && pwd)"
+
+# Automatically ensure CLI helper scripts in ~/.local/bin/ are symlinked to this repository
+auto_symlink_scripts() {
+    local bin_dir="$CONFIG_OWNER_HOME/.local/bin"
+    [ "$SCRIPT_DIR" = "$bin_dir" ] && return 0
+    mkdir -p "$bin_dir" 2>/dev/null || return 0
+
+    local scripts=("putsync.sh" "get_movie.sh" "sorter.py" "delete.sh" "initial-import.sh" "jellyfin-docker-setup.sh")
+    for s in "${scripts[@]}"; do
+        local src="$SCRIPT_DIR/$s"
+        local dst="$bin_dir/$s"
+        if [ -f "$src" ]; then
+            if [ ! -L "$dst" ] || [ "$(readlink -f "$dst" 2>/dev/null)" != "$src" ]; then
+                ln -sf "$src" "$dst" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # Convenience aliases
+    [ -f "$SCRIPT_DIR/get_movie.sh" ] && ln -sf "$SCRIPT_DIR/get_movie.sh" "$bin_dir/get_media.sh" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/initial-import.sh" ] && ln -sf "$SCRIPT_DIR/initial-import.sh" "$bin_dir/import_media.sh" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/jellyfin-docker-setup.sh" ] && ln -sf "$SCRIPT_DIR/jellyfin-docker-setup.sh" "$bin_dir/docker-reinstall.sh" 2>/dev/null || true
+}
+auto_symlink_scripts
 
 # Path fallbacks
 MEDIA_DIR="${MEDIA_DIR:-$HOME/Jellyfin/media/}"

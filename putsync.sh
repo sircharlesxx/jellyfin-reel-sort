@@ -5,9 +5,9 @@
 #
 # Standardized Automated Pipeline:
 #   1. Lock & Concurrency: Prevents overlapping runs via non-blocking flock.
-#   2. User & Config: Automatically targets user (mariofishy) & loads ~/.config.
+#   2. User & Config: Automatically targets user & loads ~/.config.
 #   3. Cloud Ingest: rclone copy from Put.io remote to ~/Jellyfin/downloads/.
-#   4. Permission Management: Fixes ownership for mariofishy on root cron runs.
+#   4. Permission Management: Fixes ownership for target user on root cron runs.
 #   5. Media Hardlink & Sort: Runs sorter.py to link into Shows/ and Movies/.
 #   6. Library Notification: Signals Jellyfin to scan for newly organized media.
 # ==============================================================================
@@ -23,18 +23,75 @@ if ! flock -n 200; then
     exit 0
 fi
 
-# 2. Detect target user and load configuration
-TARGET_USER="${SUDO_USER:-$USER}"
-if [ "$TARGET_USER" = "root" ] || [ -z "$TARGET_USER" ]; then
-    if id "mariofishy" >/dev/null 2>&1; then
-        TARGET_USER="mariofishy"
-    else
-        TARGET_USER="$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd 2>/dev/null || echo "$USER")"
+# 2. Resolve script location and target user dynamically
+SOURCE_FILE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE_FILE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE_FILE")" && pwd)"
+    SOURCE_FILE="$(readlink "$SOURCE_FILE")"
+    [[ $SOURCE_FILE != /* ]] && SOURCE_FILE="$DIR/$SOURCE_FILE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE_FILE")" && pwd)"
+
+TARGET_USER="${TARGET_USER:-$SUDO_USER}"
+[ -z "$TARGET_USER" ] && [ "$USER" != "root" ] && TARGET_USER="$USER"
+
+if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+    # 1. Discover owner from existing user configuration
+    for conf in /home/*/.config/jellyfin-reel-sort.conf; do
+        if [ -f "$conf" ]; then
+            cand="$(basename "$(dirname "$(dirname "$conf")")")"
+            if id "$cand" >/dev/null 2>&1; then
+                TARGET_USER="$cand"
+                break
+            fi
+        fi
+    done
+fi
+
+if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+    # 2. Check repo/script owner
+    repo_owner="$(stat -c '%U' "$SCRIPT_DIR" 2>/dev/null || true)"
+    if [ -n "$repo_owner" ] && [ "$repo_owner" != "root" ] && id "$repo_owner" >/dev/null 2>&1; then
+        TARGET_USER="$repo_owner"
     fi
+fi
+
+if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+    # 3. First non-system user (UID >= 1000)
+    TARGET_USER="$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd 2>/dev/null || echo "$USER")"
 fi
 
 TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)"
 TARGET_HOME="${TARGET_HOME:-/home/$TARGET_USER}"
+
+# Automatically ensure CLI helper scripts in ~/.local/bin/ are symlinked to this repository
+auto_symlink_scripts() {
+    local bin_dir="$TARGET_HOME/.local/bin"
+    [ "$SCRIPT_DIR" = "$bin_dir" ] && return 0
+    mkdir -p "$bin_dir" 2>/dev/null || return 0
+
+    local scripts=("putsync.sh" "get_movie.sh" "sorter.py" "delete.sh" "initial-import.sh" "jellyfin-docker-setup.sh")
+    for s in "${scripts[@]}"; do
+        local src="$SCRIPT_DIR/$s"
+        local dst="$bin_dir/$s"
+        if [ -f "$src" ]; then
+            if [ ! -L "$dst" ] || [ "$(readlink -f "$dst" 2>/dev/null)" != "$src" ]; then
+                ln -sf "$src" "$dst" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # Convenience aliases
+    [ -f "$SCRIPT_DIR/get_movie.sh" ] && ln -sf "$SCRIPT_DIR/get_movie.sh" "$bin_dir/get_media.sh" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/initial-import.sh" ] && ln -sf "$SCRIPT_DIR/initial-import.sh" "$bin_dir/import_media.sh" 2>/dev/null || true
+    [ -f "$SCRIPT_DIR/jellyfin-docker-setup.sh" ] && ln -sf "$SCRIPT_DIR/jellyfin-docker-setup.sh" "$bin_dir/docker-reinstall.sh" 2>/dev/null || true
+
+    # Fix ownership if executed as root so target user owns the symlinks
+    if [ "$(id -u)" -eq 0 ] && id "$TARGET_USER" >/dev/null 2>&1; then
+        chown -h "$TARGET_USER:$TARGET_USER" "$bin_dir"/*.sh "$bin_dir"/sorter.py 2>/dev/null || true
+    fi
+}
+auto_symlink_scripts
 
 CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-$TARGET_HOME/.config/jellyfin-reel-sort.conf}"
 if [ ! -f "$CONFIG_FILE" ] && [ -f "/etc/jellyfin-reel-sort.conf" ]; then
@@ -53,7 +110,6 @@ fi
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-$TARGET_HOME/Jellyfin/downloads/}"
 LOG_FILE="${LOG_FILE:-/var/log/jellyfin-reel-sort.log}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SORTER_SCRIPT="$SCRIPT_DIR/sorter.py"
 if [ ! -f "$SORTER_SCRIPT" ]; then
     SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
