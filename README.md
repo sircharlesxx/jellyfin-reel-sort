@@ -13,7 +13,7 @@
 
 ## 👋 Welcome to Jellyfin Reel Sort!
 
-Imagine having a magic assistant that constantly checks your cloud storage (like Put.io), downloads new movies and TV shows at lightning speed, organizes them perfectly for Jellyfin, and cleans up the mess—all without using up double the space on your hard drive! 
+Imagine having a magic assistant that constantly checks your cloud storage, downloads new movies and TV shows at lightning speed, organizes them perfectly for Jellyfin, and cleans up the mess—all without using up double the space on your hard drive! 
 
 That's exactly what **Jellyfin Reel Sort** does. 🍿
 
@@ -24,7 +24,7 @@ That's exactly what **Jellyfin Reel Sort** does. 🍿
 Here is the journey of your media, from the cloud directly to your TV screen:
 
 ```text
-☁️ Cloud Storage (e.g., Put.io)
+☁️ Cloud Storage / Remote Server
        │
        ▼  (1. Downloads)
        │
