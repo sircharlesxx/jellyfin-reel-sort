@@ -11,7 +11,7 @@ from guessit import guessit
 # The script will still sort and link all media normally — just skip subs.
 # Set back to 1 when ready to re-enable.
 # =============================================================================
-ENABLE_SUBTITLES = 1
+ENABLE_SUBTITLES = int(os.environ.get("ENABLE_SUBTITLES", "1"))
 
 # Rotate realistic desktop browser User-Agents
 USER_AGENTS = [
@@ -922,7 +922,7 @@ def process_files(target=None):
             # If the filename itself lacks a title (e.g. S01E01.mkv inside a named folder),
             # re-run guessit with the relative path to extract title from parent directories
             if 'title' not in info or ('season' not in info and 'episode' not in info and info.get('type') != 'movie'):
-                rel_path = os.path.relpath(source_path, DOWNLOADS_DIR)
+                rel_path = os.path.relpath(source_path, DOWNLOADS_DIR) if DOWNLOADS_DIR and source_path.startswith(DOWNLOADS_DIR) else os.path.join(os.path.basename(root), file)
                 rel_info = guessit(rel_path)
                 if 'title' in rel_info:
                     info = rel_info

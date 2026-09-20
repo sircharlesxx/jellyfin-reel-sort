@@ -96,6 +96,7 @@ jellyfin-reel-sort/
 ├── putsync.sh                # Orchestration script with flock and rclone copy
 ├── sorter.py                 # Media parsing, lazy discovery, hardlinker, subtitles & cleanup
 ├── jellyfin-docker-setup.sh  # Clean Docker Jellyfin install & hardlink directory setup
+├── initial-import.sh         # Fast initial/bulk import of existing downloads into Jellyfin
 ├── delete.sh                 # Interactive media deleter across Jellyfin, downloads & Put.io
 ├── get_movie.sh              # Interactive single-item downloader with concurrency control
 ├── requirements.txt          # Python dependencies list
@@ -231,6 +232,26 @@ Provides an automated clean install / reinstall of Jellyfin via Docker configure
 
 ```bash
 sudo ./jellyfin-docker-setup.sh
+```
+
+### Initial Media Import (`initial-import.sh` / `import_media.sh`)
+Bulk-sort and import pre-existing downloads from `~/Jellyfin/downloads/` (or any custom folder) directly into your Jellyfin library:
+- Parses titles, seasons, episodes, and release years via `guessit`.
+- Creates zero-space hardlinks directly into `Shows/` and `Movies/`.
+- Links and sanitizes local packaged `.srt` subtitles.
+- Choose between **Fast Import** (skips online subtitle API delays to link your library in seconds) or **Full Import with Online Subtitles**.
+- Automatically aligns file ownership and `775` permissions for Docker.
+- Triggers a Jellyfin library scan upon completion.
+
+```bash
+# Interactive run (imports ~/Jellyfin/downloads/)
+./initial-import.sh
+
+# Blazing-fast bulk import skipping online subtitle lookups
+./initial-import.sh --fast
+
+# Import from a custom directory
+./initial-import.sh /path/to/custom/folder --fast
 ```
 
 ### Interactive Media Removal (`delete.sh`)

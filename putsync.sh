@@ -53,7 +53,11 @@ fi
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-$TARGET_HOME/Jellyfin/downloads/}"
 LOG_FILE="${LOG_FILE:-/var/log/jellyfin-reel-sort.log}"
-SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SORTER_SCRIPT="$SCRIPT_DIR/sorter.py"
+if [ ! -f "$SORTER_SCRIPT" ]; then
+    SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if [ -x "$TARGET_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ] && [ "$PYTHON_BIN" = "python3" ]; then
