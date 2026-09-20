@@ -48,10 +48,15 @@ fi
 # Path fallbacks
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-$HOME/Jellyfin/downloads/}"
 MEDIA_DIR="${MEDIA_DIR:-$HOME/Jellyfin/media/}"
-SHOWS_DIR="${SHOWS_DIR:-$MEDIA_DIR/Shows/}"
-MOVIES_DIR="${MOVIES_DIR:-$MEDIA_DIR/Movies/}"
+SHOWS_DIR="${SHOWS_DIR:-${MEDIA_DIR%/}/Shows/}"
+MOVIES_DIR="${MOVIES_DIR:-${MEDIA_DIR%/}/Movies/}"
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
-SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SORTER_SCRIPT="$SCRIPT_DIR/sorter.py"
+if [ ! -f "$SORTER_SCRIPT" ]; then
+    SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+fi
 
 # Resolve Python interpreter
 if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
@@ -112,7 +117,7 @@ download_and_sort() {
     local remote_path="$1"
     prompt_concurrency
 
-    local dest_file="$DOWNLOADS_DIR/$remote_path"
+    local dest_file="${DOWNLOADS_DIR%/}/$remote_path"
     local dest_dir
     dest_dir="$(dirname "$dest_file")"
     mkdir -p "$dest_dir"
