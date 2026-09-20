@@ -293,8 +293,11 @@ CONF_EOF
 echo "[+] Installing scripts into $INSTALL_DIR..."
 cp "$SCRIPT_DIR/sorter.py" "$INSTALL_DIR/sorter.py"
 cp "$SCRIPT_DIR/putsync.sh" "$INSTALL_DIR/putsync.sh"
+cp "$SCRIPT_DIR/initial-import.sh" "$INSTALL_DIR/initial-import.sh" 2>/dev/null || true
+cp "$SCRIPT_DIR/delete.sh" "$INSTALL_DIR/delete.sh" 2>/dev/null || true
+cp "$SCRIPT_DIR/get_movie.sh" "$INSTALL_DIR/get_movie.sh" 2>/dev/null || true
 chmod +x "$INSTALL_DIR/sorter.py"
-chmod +x "$INSTALL_DIR/putsync.sh"
+chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
 
 # Ensure user state/log directory exists
 mkdir -p "$HOME/.local/state/jellyfin-reel-sort"

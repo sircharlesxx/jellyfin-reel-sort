@@ -11,7 +11,7 @@ from guessit import guessit
 # The script will still sort and link all media normally — just skip subs.
 # Set back to 1 when ready to re-enable.
 # =============================================================================
-ENABLE_SUBTITLES = int(os.environ.get("ENABLE_SUBTITLES", "1"))
+ENABLE_SUBTITLES = int(os.environ.get("ENABLE_SUBTITLES", "0"))
 
 # Rotate realistic desktop browser User-Agents
 USER_AGENTS = [
