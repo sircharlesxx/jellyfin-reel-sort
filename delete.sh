@@ -39,8 +39,9 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 # Path fallbacks
-SHOWS_DIR="${SHOWS_DIR:-$HOME/Jellyfin/media/Shows}"
-MOVIES_DIR="${MOVIES_DIR:-$HOME/Jellyfin/media/Movies}"
+MEDIA_DIR="${MEDIA_DIR:-$HOME/Jellyfin/media/}"
+SHOWS_DIR="${SHOWS_DIR:-${MEDIA_DIR%/}/Shows}"
+MOVIES_DIR="${MOVIES_DIR:-${MEDIA_DIR%/}/Movies}"
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-$HOME/Jellyfin/downloads/}"
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
 
@@ -61,10 +62,16 @@ delete_target() {
     local media_path=""
 
     if [ "$media_type" = "show" ]; then
-        media_path="$SHOWS_DIR/$title"
+        media_path="${SHOWS_DIR%/}/$title"
     else
-        media_path="$MOVIES_DIR/$title"
+        media_path="${MOVIES_DIR%/}/$title"
     fi
+
+    # Clean title (strip release year and prepare dot/wildcard pattern for download filenames)
+    local title_clean
+    title_clean="$(echo "$title" | sed -E 's/ \([0-9]{4}\)//')"
+    local title_search
+    title_search="$(echo "$title_clean" | tr ' ' '*')"
 
     echo ""
     echo -e "${BOLD}======================================================${RESET}"
@@ -91,7 +98,7 @@ delete_target() {
             dl_size="$(du -sh "$match" 2>/dev/null | cut -f1)"
             echo -e "  Found: ${GREEN}$match${RESET} (${dl_size})"
         fi
-    done < <(find "$DOWNLOADS_DIR" -maxdepth 2 -iname "*$title*" 2>/dev/null || true)
+    done < <(find "$DOWNLOADS_DIR" -maxdepth 3 \( -iname "*$title*" -o -iname "*$title_search*" \) 2>/dev/null | sort -u || true)
 
     if [ ${#dl_matches[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}No matching source files found in $DOWNLOADS_DIR${RESET}"
@@ -106,7 +113,7 @@ delete_target() {
                 remote_matches+=("$rmatch")
                 echo -e "  Found on Put.io: ${CYAN}$rmatch${RESET}"
             fi
-        done < <(rclone lsf "$REMOTE_NAME:/" 2>/dev/null | grep -i "$title" || true)
+        done < <(rclone lsf "$REMOTE_NAME:/" 2>/dev/null | grep -iE "($title|$title_clean)" || true)
 
         # Also search in putflix/ subfolder if exists
         while IFS= read -r rmatch; do
@@ -114,7 +121,7 @@ delete_target() {
                 remote_matches+=("putflix/$rmatch")
                 echo -e "  Found on Put.io: ${CYAN}putflix/$rmatch${RESET}"
             fi
-        done < <(rclone lsf "$REMOTE_NAME:/putflix/" 2>/dev/null | grep -i "$title" || true)
+        done < <(rclone lsf "$REMOTE_NAME:/putflix/" 2>/dev/null | grep -iE "($title|$title_clean)" || true)
     fi
 
     if [ ${#remote_matches[@]} -eq 0 ]; then

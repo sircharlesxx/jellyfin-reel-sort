@@ -27,19 +27,25 @@ if [ "$(id -u)" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Detect actual target user (even when running via sudo)
 TARGET_USER="${SUDO_USER:-$USER}"
-if [ "$TARGET_USER" = "root" ]; then
-    # If invoked directly as root, look for real non-root users in /home
-    for h in /home/*; do
-        if [ -d "$h" ]; then
-            u="$(basename "$h")"
-            if id "$u" >/dev/null 2>&1; then
-                TARGET_USER="$u"
-                break
+if [ "$TARGET_USER" = "root" ] || [ -z "$TARGET_USER" ]; then
+    if id "mariofishy" >/dev/null 2>&1; then
+        TARGET_USER="mariofishy"
+    else
+        # If invoked directly as root, look for real non-root users in /home
+        for h in /home/*; do
+            if [ -d "$h" ]; then
+                u="$(basename "$h")"
+                if id "$u" >/dev/null 2>&1 && [ "$u" != "lost+found" ]; then
+                    TARGET_USER="$u"
+                    break
+                fi
             fi
-        fi
-    done
+        done
+    fi
 fi
 
 TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)"
@@ -187,7 +193,7 @@ SUBTITLE_LANGUAGES="en"
 REMOTE_NAME="put.io"
 JELLYFIN_URL="http://localhost:8096"
 JELLYFIN_API_KEY=""
-SORTER_PATH="$(dirname "$0")/sorter.py"
+SORTER_PATH="$SCRIPT_DIR/sorter.py"
 EOF
 fi
 chown "$TARGET_UID:$TARGET_GID" "$USER_CONFIG"

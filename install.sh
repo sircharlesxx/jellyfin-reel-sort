@@ -296,6 +296,13 @@ cp "$SCRIPT_DIR/putsync.sh" "$INSTALL_DIR/putsync.sh"
 cp "$SCRIPT_DIR/initial-import.sh" "$INSTALL_DIR/initial-import.sh" 2>/dev/null || true
 cp "$SCRIPT_DIR/delete.sh" "$INSTALL_DIR/delete.sh" 2>/dev/null || true
 cp "$SCRIPT_DIR/get_movie.sh" "$INSTALL_DIR/get_movie.sh" 2>/dev/null || true
+cp "$SCRIPT_DIR/jellyfin-docker-setup.sh" "$INSTALL_DIR/jellyfin-docker-setup.sh" 2>/dev/null || true
+
+# Setup convenience symlinks in INSTALL_DIR
+ln -sf "$INSTALL_DIR/get_movie.sh" "$INSTALL_DIR/get_media.sh" 2>/dev/null || true
+ln -sf "$INSTALL_DIR/initial-import.sh" "$INSTALL_DIR/import_media.sh" 2>/dev/null || true
+ln -sf "$INSTALL_DIR/jellyfin-docker-setup.sh" "$INSTALL_DIR/docker-reinstall.sh" 2>/dev/null || true
+
 chmod +x "$INSTALL_DIR/sorter.py"
 chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
 
@@ -307,15 +314,19 @@ echo "================================================"
 echo "    Installation Complete!"
 echo "================================================"
 echo "Scripts installed:"
-echo "  - Sync & Sort Orchestrator: $INSTALL_DIR/putsync.sh"
-echo "  - Hardlink Sorter:          $INSTALL_DIR/sorter.py"
-echo "  - Python Binary:            $PYTHON_BIN"
-echo "  - Rclone Remote Name:       $REMOTE_NAME"
-echo "Configuration file:           $CONF_PATH"
+echo "  - Sync & Sort Orchestrator:  $INSTALL_DIR/putsync.sh"
+echo "  - Single Media Downloader:   $INSTALL_DIR/get_movie.sh (or get_media.sh)"
+echo "  - Initial Bulk Importer:     $INSTALL_DIR/initial-import.sh (or import_media.sh)"
+echo "  - Interactive Media Deleter: $INSTALL_DIR/delete.sh"
+echo "  - Docker Reinstall & Setup:  $INSTALL_DIR/jellyfin-docker-setup.sh"
+echo "  - Hardlink Sorter:           $INSTALL_DIR/sorter.py"
+echo "  - Python Binary:             $PYTHON_BIN"
+echo "  - Rclone Remote Name:        $REMOTE_NAME"
+echo "Configuration file:            $CONF_PATH"
 echo ""
 echo "To run manually:"
 echo "  JELLYFIN_SORT_CONFIG=\"$CONF_PATH\" $INSTALL_DIR/putsync.sh"
 echo ""
-echo "To automate with cron (every 30 mins), add to 'crontab -e':"
-echo "  */30 * * * * JELLYFIN_SORT_CONFIG=\"$CONF_PATH\" $INSTALL_DIR/putsync.sh >/dev/null 2>&1"
+echo "To automate with cron (every 5 mins), add to crontab:"
+echo "  */5 * * * * JELLYFIN_SORT_CONFIG=\"$CONF_PATH\" $INSTALL_DIR/putsync.sh >/dev/null 2>&1"
 echo "================================================"
