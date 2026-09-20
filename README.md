@@ -101,20 +101,6 @@ Our smart installer will automatically find your media folders, configure your c
 
 ---
 
-## 🗑️ How The "Magic Janitor" Works (`delete.sh`)
-
-If you just delete a movie inside the Jellyfin app, it only removes the *link*. The original massive file is still hiding in your `downloads/` folder, secretly eating up your hard drive space! And worse, if it's still in your cloud storage, the auto-sync might just download it again tomorrow.
-
-To solve this, we built `delete.sh`. When you run it, it:
-1. **Asks What You Want:** Gives you an interactive menu to browse TV Shows, browse Movies, or search by keyword.
-2. **Finds Every Trace:** Locates the perfectly named file in your `media/` library AND the messy original file in your `downloads/` folder.
-3. **Calculates Space:** Shows you exactly how much local disk space you are about to reclaim.
-4. **Performs a Deep Clean:** Deletes the local files to instantly free up your hard drive.
-5. **(Optional) Cloud Purge:** Asks if you want to delete the file from your cloud storage (e.g., Put.io) too, ensuring it never gets auto-downloaded again.
-6. **Updates Jellyfin:** Automatically pings your Jellyfin server so the movie instantly disappears from your screen.
-
----
-
 ## 📖 Everyday Cheat Sheet
 
 Here are the most common things you might want to do:
@@ -138,6 +124,13 @@ Run the cleaner to remove media everywhere at once:
 ```bash
 delete.sh
 ```
+> **What the Magic Janitor does behind the scenes:**  
+> If you just delete a movie inside the Jellyfin app, the original massive file is still hiding in your `downloads/` folder eating space, and your cloud sync might redownload it! `delete.sh` fixes this by:
+> 1. Giving you an interactive menu to browse/search your library.
+> 2. Finding both the perfectly named `media/` file and the messy original `downloads/` file.
+> 3. Calculating exactly how much space you'll reclaim.
+> 4. Deleting local files and (optionally) purging it from your cloud storage.
+> 5. Automatically pinging Jellyfin so it instantly disappears from your screen.
 
 ### 4. "I already have a bunch of downloads, organize them!"
 ```bash
