@@ -92,12 +92,15 @@ cd jellyfin-reel-sort
 
 ```text
 jellyfin-reel-sort/
-├── install.sh          # Interactive automated installer with PEP 668 & apt support
-├── putsync.sh          # Orchestration script with flock and rclone copy
-├── sorter.py           # Media parsing, lazy discovery, hardlinker, subtitles & cleanup
-├── requirements.txt    # Python dependencies list
-├── .gitignore          # Ignores bytecode and cache files
-└── README.md           # Documentation
+├── install.sh                # Interactive automated installer with PEP 668 & apt support
+├── putsync.sh                # Orchestration script with flock and rclone copy
+├── sorter.py                 # Media parsing, lazy discovery, hardlinker, subtitles & cleanup
+├── jellyfin-docker-setup.sh  # Clean Docker Jellyfin install & hardlink directory setup
+├── delete.sh                 # Interactive media deleter across Jellyfin, downloads & Put.io
+├── get_movie.sh              # Interactive single-item downloader with concurrency control
+├── requirements.txt          # Python dependencies list
+├── .gitignore                # Ignores bytecode and cache files
+└── README.md                 # Documentation
 ```
 
 ---
@@ -165,6 +168,32 @@ To run every 30 minutes automatically, add this entry to `crontab -e`:
 */30 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
 ```
 *(The built-in `flock` ensures subsequent executions exit safely if a transfer is still ongoing).*
+
+---
+
+## Helper Utilities & Setup Tools
+
+### Jellyfin Docker Setup (`jellyfin-docker-setup.sh`)
+Provides an automated clean install / reinstall of Jellyfin via Docker configured specifically for hardlinks:
+- Wipes stale database/cache without touching video files.
+- Sets up matching single-filesystem directories (`~/Jellyfin/downloads`, `~/Jellyfin/media/Shows`, `~/Jellyfin/media/Movies`).
+- Configures proper UID/GID permissions (`775`), `/dev/dri` hardware acceleration passthrough, and auto-syncs `~/.config/jellyfin-reel-sort.conf`.
+
+```bash
+sudo ./jellyfin-docker-setup.sh
+```
+
+### Interactive Media Removal (`delete.sh`)
+Safely remove titles from Jellyfin libraries, local downloads staging, and optionally the Put.io cloud remote:
+```bash
+./delete.sh
+```
+
+### Targeted Single-Item Downloader (`get_movie.sh` / `get_media.sh`)
+Interactively select and download a specific movie or show directly from Put.io with custom concurrency (`--transfers`, `--multi-thread-streams`) and immediate targeted sorting:
+```bash
+./get_movie.sh
+```
 
 ---
 
