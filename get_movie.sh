@@ -132,18 +132,22 @@ download_and_sort() {
     echo -e "${BOLD}${CYAN}------------------------------------------------------${RESET}"
     echo ""
 
+    local -a dl_flags=(
+        --progress
+        --transfers "$CONCURRENCY"
+        --checkers "$CONCURRENCY"
+        --retries 10
+        --retries-sleep 5s
+        --low-level-retries 20
+        --timeout 15m
+        --contimeout 60s
+    )
+    if "${RCLONE_CMD[@]}" copyto --help 2>&1 | grep -q -- '--multi-thread-streams'; then
+        dl_flags+=(--multi-thread-streams "$CONCURRENCY")
+    fi
+
     # Download main movie file with multi-threading
-    "${RCLONE_CMD[@]}" copyto "$REMOTE_NAME:/$remote_path" "$dest_file" \
-        --progress \
-        --transfers "$CONCURRENCY" \
-        --multi-thread-streams "$CONCURRENCY" \
-        --checkers "$CONCURRENCY" \
-        --retries 10 \
-        --retries-sleep 5s \
-        --low-level-retries 20 \
-        --timeout 15m \
-        --contimeout 60s \
-        --partial-suffix .partial
+    "${RCLONE_CMD[@]}" copyto "$REMOTE_NAME:/$remote_path" "$dest_file" "${dl_flags[@]}"
 
     # Also grab any accompanying subtitles in the same remote folder
     local remote_dir

@@ -94,18 +94,24 @@ SYNC_STREAMS="${SYNC_STREAMS:-4}"
 SYNC_RETRIES="${SYNC_RETRIES:-10}"
 SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
 
+# Core flags supported universally across all rclone versions
 RCLONE_RESILIENCE_FLAGS=(
-    --check-first
-    --order-by "size,ascending"
     --transfers "$SYNC_TRANSFERS"
-    --multi-thread-streams "$SYNC_STREAMS"
     --retries "$SYNC_RETRIES"
     --retries-sleep 5s
     --low-level-retries "$SYNC_LOW_LEVEL_RETRIES"
     --timeout 15m
     --contimeout 60s
-    --partial-suffix .partial
 )
+
+# Dynamically add advanced flags if supported by installed rclone version
+RCLONE_HELP="$(rclone copy --help 2>&1 || true)"
+if echo "$RCLONE_HELP" | grep -q -- '--order-by'; then
+    RCLONE_RESILIENCE_FLAGS+=(--check-first --order-by "size,ascending")
+fi
+if echo "$RCLONE_HELP" | grep -q -- '--multi-thread-streams'; then
+    RCLONE_RESILIENCE_FLAGS+=(--multi-thread-streams "$SYNC_STREAMS")
+fi
 
 if command -v rclone >/dev/null 2>&1; then
     if [ -t 1 ]; then
