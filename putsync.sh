@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ==============================================================================
-# Jellyfin Reel Sort — Main Put.io Ingest & Sort Pipeline
+# Jellyfin Reel Sort — Main Cloud Ingest & Sort Pipeline
 #
 # Standardized Automated Pipeline:
 #   1. Lock & Concurrency: Prevents overlapping runs via non-blocking flock.
 #   2. User & Config: Automatically targets user & loads ~/.config.
-#   3. Cloud Ingest: rclone copy from Put.io remote to ~/Jellyfin/downloads/.
+#   3. Cloud Ingest: rclone copy from cloud remote to ~/Jellyfin/downloads/.
 #   4. Permission Management: Fixes ownership for target user on root cron runs.
 #   5. Media Hardlink & Sort: Runs sorter.py to link into Shows/ and Movies/.
 #   6. Library Notification: Signals Jellyfin to scan for newly organized media.
@@ -139,11 +139,13 @@ log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
 mkdir -p "$DOWNLOADS_DIR"
 
 # Checkpointing & Resilience Flags:
-# - Sequential transfer (--transfers 1): commits one file at a time; completed files act as checkpoints
-# - Size ordering (--order-by size,asc): finishes smaller files first so they are immediately preserved
-# - Pre-flight check (--check-first): fast-skips all completed files in memory before queueing
-# - Multi-stream chunks (--multi-thread-streams 8): parallel chunk downloads for speed and stream stability
-# - Deep retries (--retries 10, --low-level-retries 20): automatically recovers from network drops
+# - Sequential transfer (--transfers 1): Commits exactly 1 file at a time. Once a file finishes, 
+#   it is permanently locked in. If the connection drops, it resumes from the next file (Checkpointing).
+# - Size ordering (--order-by size,asc): Finishes smaller files first so they are immediately preserved.
+# - Pre-flight check (--check-first): Fast-skips all completed files in memory before queueing.
+# - Multi-stream chunks (--multi-thread-streams 8): Utilizes concurrent HTTP Range requests to open 
+#   8 parallel streams per file, forcing carriers to allocate maximum bandwidth (saturates gigabit/5G).
+# - Deep retries (--retries 10, --low-level-retries 20): Automatically recovers from network drops.
 SYNC_TRANSFERS="${SYNC_TRANSFERS:-1}"
 SYNC_STREAMS="${SYNC_STREAMS:-8}"
 SYNC_RETRIES="${SYNC_RETRIES:-10}"

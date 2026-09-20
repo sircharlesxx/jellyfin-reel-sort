@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Jellyfin Reel Sort — Single Movie & Media Downloader
-# Interactively selects a movie or show from Put.io / rclone remote,
+# Interactively selects a movie or show from the cloud rclone remote,
 # prompts for download concurrency, downloads via multi-threaded streams,
 # and sorts/hardlinks it directly into your Jellyfin library.
 # ==============================================================================
@@ -172,6 +172,9 @@ download_and_sort() {
         --timeout 15m
         --contimeout 60s
     )
+    # Optimize network saturation via Parallel Multi-Streaming:
+    # We utilize concurrent HTTP Range requests to split the target file and open 
+    # parallel streams simultaneously, forcing carriers to allocate maximum bandwidth.
     if "${RCLONE_CMD[@]}" copyto --help 2>&1 | grep -q -- '--multi-thread-streams'; then
         dl_flags+=(--multi-thread-streams "$CONCURRENCY")
     fi

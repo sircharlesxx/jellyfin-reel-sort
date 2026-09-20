@@ -7,6 +7,21 @@ import glob
 from guessit import guessit
 
 # =============================================================================
+# Media Sorter & Hardlinker
+# 
+# This script bridges the gap between ingest pipelines and Jellyfin natively 
+# using filesystem Hardlinks (os.link).
+# 
+# Hardlinking Philosophy:
+# - Preserves Sync & Seed State: The original file remains untouched in the 
+#   downloads directory so auto-syncs and torrent clients continue seeding.
+# - Pristine Library Metadata: Jellyfin receives a perfectly named and sorted 
+#   file structure, guaranteeing accurate metadata matching.
+# - Instantaneous & I/O Free: Creating a hardlink happens at the filesystem 
+#   level with zero disk I/O overhead.
+# =============================================================================
+
+# =============================================================================
 # QUICK TOGGLE: Set to 0 to disable subtitle downloading entirely.
 # The script will still sort and link all media normally — just skip subs.
 # Set back to 1 when ready to re-enable.

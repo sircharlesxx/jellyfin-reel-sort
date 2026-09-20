@@ -5,7 +5,7 @@
 # Safely deletes media from:
 #   1. Jellyfin Library (Shows / Movies)
 #   2. Downloads Folder (frees hardlink disk space)
-#   3. (Optional) Put.io Remote (prevents re-downloading)
+#   3. (Optional) Cloud Remote (prevents re-downloading)
 #   4. Triggers automatic Jellyfin library refresh
 # ==============================================================================
 
@@ -124,6 +124,8 @@ delete_target() {
     fi
 
     # 2. Check Downloads folder for matching files / folders
+    # Magic Janitor Logic: Deleting a movie inside the Jellyfin app only removes the hardlink.
+    # The original massive file is still hiding in your downloads/ folder. We find and purge it here.
     echo -e "\n${BOLD}[2] Downloads folder matches:${RESET}"
     local -a dl_matches=()
     while IFS= read -r match; do
