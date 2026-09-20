@@ -1,24 +1,36 @@
 #!/bin/bash
 
-# Configuration file support — search in priority order:
-#   1. Explicit env var (e.g. set in crontab)
-#   2. /etc system-wide config
-#   3. Any user's ~/.config/jellyfin-reel-sort.conf (handles sudo/root runs)
-CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-}"
+# ==============================================================================
+# Jellyfin Reel Sort — Main Put.io Ingest & Sort Pipeline
+# ==============================================================================
 
-if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
-    if [ -f "/etc/jellyfin-reel-sort.conf" ]; then
-        CONFIG_FILE="/etc/jellyfin-reel-sort.conf"
+# 1. Prevent concurrent runs using non-blocking lock
+LOCK_FILE="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
+trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
+exec 200>"$LOCK_FILE"
+chmod 666 "$LOCK_FILE" 2>/dev/null || true
+
+if ! flock -n 200; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sync already running. Exiting."
+    exit 0
+fi
+
+# 2. Detect target user and load configuration
+TARGET_USER="${SUDO_USER:-$USER}"
+if [ "$TARGET_USER" = "root" ] || [ -z "$TARGET_USER" ]; then
+    if id "mariofishy" >/dev/null 2>&1; then
+        TARGET_USER="mariofishy"
     else
-        # Search all real user home directories for the config
-        for homedir in /home/*/; do
-            candidate="$homedir.config/jellyfin-reel-sort.conf"
-            if [ -f "$candidate" ]; then
-                CONFIG_FILE="$candidate"
-                break
-            fi
-        done
+        TARGET_USER="$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd 2>/dev/null || echo "$USER")"
     fi
+fi
+
+TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)"
+TARGET_HOME="${TARGET_HOME:-/home/$TARGET_USER}"
+
+CONFIG_FILE="${JELLYFIN_SORT_CONFIG:-$TARGET_HOME/.config/jellyfin-reel-sort.conf}"
+if [ ! -f "$CONFIG_FILE" ] && [ -f "/etc/jellyfin-reel-sort.conf" ]; then
+    CONFIG_FILE="/etc/jellyfin-reel-sort.conf"
 fi
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -27,83 +39,58 @@ if [ -f "$CONFIG_FILE" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
     set +a
-    # Derive the config owner's home dir for venv resolution below
-    CONFIG_OWNER_HOME="$(dirname "$(dirname "$CONFIG_FILE")")"
-else
-    CONFIG_OWNER_HOME="$HOME"
 fi
 
-# Lazy auto-detection for rclone remote if not explicitly specified
-if [ -z "$REMOTE_NAME" ]; then
-    if command -v rclone > /dev/null 2>&1; then
-        # Check if 'put.io' exists, or any remote with 'put' in it, or use the first available remote
-        while IFS= read -r rem; do
-            clean_rem="${rem%:}"
-            if [[ "$clean_rem" =~ [Pp][Uu][Tt] ]]; then
-                REMOTE_NAME="$clean_rem"
-                break
-            elif [ -z "$REMOTE_NAME" ] && [ -n "$clean_rem" ]; then
-                REMOTE_NAME="$clean_rem"
-            fi
-        done < <(rclone listremotes 2>/dev/null || true)
-    fi
-fi
+# 3. Environment defaults
 REMOTE_NAME="${REMOTE_NAME:-put.io}"
-
-LOCAL_PATH="${DOWNLOADS_DIR:-/home/mariofishy/Jellyfin/downloads/}"
+DOWNLOADS_DIR="${DOWNLOADS_DIR:-$TARGET_HOME/Jellyfin/downloads/}"
 LOG_FILE="${LOG_FILE:-/var/log/jellyfin-reel-sort.log}"
-LOCK_FILE="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
 SORTER_SCRIPT="${SORTER_PATH:-$(dirname "$0")/sorter.py}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-# Resolve Python interpreter — check config's venv first, then system python3
-if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
-    PY_CMD="$PYTHON_BIN"
-elif [ -x "$CONFIG_OWNER_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ]; then
-    PY_CMD="$CONFIG_OWNER_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3"
-else
-    PY_CMD="$(command -v python3)"
+if [ -x "$TARGET_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3" ] && [ "$PYTHON_BIN" = "python3" ]; then
+    PYTHON_BIN="$TARGET_HOME/.local/share/jellyfin-reel-sort/venv/bin/python3"
 fi
 
-# Ensure log dir exists
-LOG_DIR="$(dirname "$LOG_FILE")"
-mkdir -p "$LOG_DIR" 2>/dev/null || true
+# Fall back to user directory if /var/log is not writable
+if ! mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || ! touch "$LOG_FILE" 2>/dev/null; then
+    LOG_FILE="$TARGET_HOME/Jellyfin/sync.log"
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+fi
 
-# Clean up lock file on exit (normal, error, or signal) so stale locks
-# owned by root never block future runs
-cleanup() {
-    rm -f "$LOCK_FILE"
-}
-trap cleanup EXIT INT TERM
-
-# Prevent script from running more than once concurrently
-(
-  flock -n 200 || { echo "Already running — exiting." >> "$LOG_FILE"; exit 1; }
-
-  echo "--- Starting $REMOTE_NAME copy job at $(date) ---" >> "$LOG_FILE"
-
-  if command -v rclone > /dev/null 2>&1; then
-    rclone copy "$REMOTE_NAME:/" "$LOCAL_PATH" \
-      --progress \
-      --log-file="$LOG_FILE"
-
-    # Fix ownership so the downloads folder owner can read files even
-    # when rclone ran as root (works on any rclone version)
-    MEDIA_OWNER="$(stat -c '%U' "$LOCAL_PATH" 2>/dev/null || echo '')"
-    if [ -n "$MEDIA_OWNER" ] && [ "$MEDIA_OWNER" != "root" ]; then
-      chown -R "$MEDIA_OWNER" "$LOCAL_PATH" 2>/dev/null || true
+log() {
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "$msg" >> "$LOG_FILE"
+    if [ -t 1 ]; then
+        echo "$msg"
     fi
-  else
-    echo "Warning: rclone not found in PATH. Skipping remote copy." >> "$LOG_FILE"
-  fi
+}
 
-  echo "--- Copy job finished at $(date) ---" >> "$LOG_FILE"
-  echo "" >> "$LOG_FILE"
+# 4. Ingest new downloads from Put.io
+log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
+mkdir -p "$DOWNLOADS_DIR"
 
-  echo "--- Starting sort and hardlink at $(date) ---" >> "$LOG_FILE"
+if command -v rclone >/dev/null 2>&1; then
+    if [ -t 1 ]; then
+        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" --progress --log-file="$LOG_FILE"
+    else
+        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" --log-file="$LOG_FILE"
+    fi
+else
+    log "Error: rclone not found in PATH. Skipping remote copy."
+fi
 
-  "$PY_CMD" "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
+# Ensure correct file ownership when run via sudo / root cron
+if [ "$(id -u)" -eq 0 ] && id "$TARGET_USER" >/dev/null 2>&1; then
+    chown -R "$TARGET_USER:$TARGET_USER" "$DOWNLOADS_DIR" 2>/dev/null || true
+fi
 
-  echo "--- Copy and Sort jobs finished at $(date) ---" >> "$LOG_FILE"
-  echo "" >> "$LOG_FILE"
+# 5. Sort, hardlink, and refresh Jellyfin
+log "=== Sorting and hardlinking media into Jellyfin ==="
+if [ -t 1 ]; then
+    "$PYTHON_BIN" "$SORTER_SCRIPT" 2>&1 | tee -a "$LOG_FILE"
+else
+    "$PYTHON_BIN" "$SORTER_SCRIPT" >> "$LOG_FILE" 2>&1
+fi
 
-) 200>"$LOCK_FILE"
+log "=== Finished sync and sort pipeline ==="
