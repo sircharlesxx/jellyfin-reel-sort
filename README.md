@@ -43,26 +43,26 @@ Here is the journey of your media, from the cloud directly to your TV screen:
 
 ---
 
-## 🤯 The Magic of "Zero-Space" Hardlinks
+## 🤯 Hardlinking: The Backbone of Large Libraries
 
-When managing media, you usually have two bad options:
-1. **Move the file** into your library, which breaks your cloud sync client (it will just try to download it again because it's missing from the downloads folder!).
-2. **Copy the file** into your library, which doubles your storage space (a 10GB movie becomes 20GB).
+When managing a massive media library, you often run into a direct conflict between your ingest pipeline and your media server:
+1. **Ingest clients** (cloud sync tools or torrent clients) need files to remain in their original, messy release formats (e.g., `Movie.2024.1080p.WEB-DL.x264-GRP.mkv`) in the `downloads/` directory to continue seeding or to prevent re-downloading.
+2. **Jellyfin** requires pristine, standardized folder structures (e.g., `Movies/My Movie (2024)/My Movie (2024).mkv`) to reliably scrape metadata, fetch subtitles, and organize cast information.
 
-We built Reel Sort to use a neat filesystem trick called **Hardlinking** to solve this. Think of it like a magical portal. 
+Reel Sort bridges this gap natively using filesystem **Hardlinks**.
 
 ```text
                   [ Your Hard Drive ]
-                 📀 10 GB Movie Data
+                 📀 Target Video Inode
                       ▲       ▲
          (Points to)  │       │  (Points to)
                       │       │
-📂 downloads/Movie_Release.mkv    📂 Movies/My Movie (2024).mkv
+📂 downloads/Release_Name.mkv     📂 Movies/Clean Name (2024).mkv
 ```
 
-- 📉 **Saves Space:** Both folders look at the exact same physical data on the drive. A 10GB movie only takes up 10GB total, even though it appears in two places!
-- 🤝 **Keeps Cloud Sync Happy:** Your messy original file stays safely in the `downloads/` folder. This means when the auto-sync runs, it instantly recognizes the file is already there and skips it in milliseconds.
-- ✨ **Looks Beautiful:** Jellyfin sees a perfectly named, organized file (e.g., `Movies/Inception (2010)/Inception (2010).mkv`), keeping your library clean.
+- 🤝 **Preserves Sync & Seed State:** The original file remains untouched in the `downloads/` directory. Auto-sync scripts and torrent clients instantly recognize the file is present and intact.
+- ✨ **Pristine Library Metadata:** Jellyfin receives a perfectly named and sorted file structure, guaranteeing accurate metadata matching and a beautiful UI, without ever altering the raw download.
+- ⚡ **Instantaneous & I/O Free:** Creating a hardlink happens at the filesystem level in milliseconds. There is zero disk I/O overhead, allowing you to ingest massive 4K libraries instantly.
 
 ---
 
