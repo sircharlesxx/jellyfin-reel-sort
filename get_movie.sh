@@ -137,7 +137,13 @@ download_and_sort() {
         --progress \
         --transfers "$CONCURRENCY" \
         --multi-thread-streams "$CONCURRENCY" \
-        --checkers "$CONCURRENCY"
+        --checkers "$CONCURRENCY" \
+        --retries 10 \
+        --retries-sleep 5s \
+        --low-level-retries 20 \
+        --timeout 15m \
+        --contimeout 60s \
+        --partial-suffix .partial
 
     # Also grab any accompanying subtitles in the same remote folder
     local remote_dir

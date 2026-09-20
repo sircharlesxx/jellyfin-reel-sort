@@ -78,15 +78,44 @@ log() {
     fi
 }
 
-# 4. Ingest new downloads from Put.io
+# 4. Ingest new downloads from Put.io with Checkpointing & Resilience
 log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
 mkdir -p "$DOWNLOADS_DIR"
 
+# Checkpointing & Resilience Flags:
+# - Sequential transfer (--transfers 1): commits one file at a time; completed files act as checkpoints
+# - Size ordering (--order-by size,asc): finishes smaller files first so they are immediately preserved
+# - Pre-flight check (--check-first): fast-skips all completed files in memory before queueing
+# - Multi-stream chunks (--multi-thread-streams 4): parallel chunk downloads for speed and stream stability
+# - Deep retries (--retries 10, --low-level-retries 20): automatically recovers from network drops
+# - Atomic partial suffix (--partial-suffix .partial): incomplete downloads won't be treated as complete
+SYNC_TRANSFERS="${SYNC_TRANSFERS:-1}"
+SYNC_STREAMS="${SYNC_STREAMS:-4}"
+SYNC_RETRIES="${SYNC_RETRIES:-10}"
+SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
+
+RCLONE_RESILIENCE_FLAGS=(
+    --check-first
+    --order-by "size,ascending"
+    --transfers "$SYNC_TRANSFERS"
+    --multi-thread-streams "$SYNC_STREAMS"
+    --retries "$SYNC_RETRIES"
+    --retries-sleep 5s
+    --low-level-retries "$SYNC_LOW_LEVEL_RETRIES"
+    --timeout 15m
+    --contimeout 60s
+    --partial-suffix .partial
+)
+
 if command -v rclone >/dev/null 2>&1; then
     if [ -t 1 ]; then
-        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" --progress --log-file="$LOG_FILE"
+        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
+            "${RCLONE_RESILIENCE_FLAGS[@]}" \
+            --progress --log-file="$LOG_FILE"
     else
-        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" --log-file="$LOG_FILE"
+        rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
+            "${RCLONE_RESILIENCE_FLAGS[@]}" \
+            --log-file="$LOG_FILE"
     fi
 else
     log "Error: rclone not found in PATH. Skipping remote copy."

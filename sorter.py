@@ -916,8 +916,22 @@ def process_files(target=None):
         for file in files:
             if not file.endswith(('.mkv', '.mp4', '.avi')):
                 continue
+            if file.endswith(('.partial', '.crdownload', '.tmp', '.part')):
+                continue
 
             source_path = os.path.join(root, file)
+
+            # Checkpoint safety: skip incomplete stubs or files actively downloading
+            try:
+                st = os.stat(source_path)
+                if st.st_size < 1024 * 1024:
+                    print(f"  [!] Skipping incomplete/truncated file (<1MB): {file}")
+                    continue
+                if time.time() - st.st_mtime < 10:
+                    print(f"  [~] Skipping active download (modified <10s ago): {file}")
+                    continue
+            except OSError:
+                continue
             info = guessit(file)
             # If the filename itself lacks a title (e.g. S01E01.mkv inside a named folder),
             # re-run guessit with the relative path to extract title from parent directories
