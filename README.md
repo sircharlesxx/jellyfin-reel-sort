@@ -10,9 +10,12 @@ Automated synchronization, media organizing, subtitle downloading, and post-proc
 
 `jellyfin-reel-sort` includes **smart lazy path discovery** to adapt dynamically across diverse environments (Synology DSM volumes `/volume1/...`, Linux home directories `~/...`, unRAID `/mnt/user/...`, TrueNAS pools, Docker mounts, etc.):
 
+- **Dynamic Target User Resolution**: Zero hardcoded usernames. Automatically detects and adapts to the active user (via `$TARGET_USER`, `$SUDO_USER`, `.config` ownership, repo filesystem ownership, or UID ≥ 1000).
+- **Auto-Symlinking CLI Architecture**: Running any script automatically verifies and live-symlinks CLI tools into `~/.local/bin/` (`putsync.sh`, `get_movie.sh`, `get_media.sh`, `initial-import.sh`, `import_media.sh`, `delete.sh`, `docker-reinstall.sh`). Running `git pull` instantly updates all commands system-wide without manual copying.
 - **Dynamic Download Ingest Discovery**: Auto-detects standard downloads directories across home folders, Synology volumes, mount points, or custom config paths.
 - **Dynamic Media Library Discovery**: Automatically inspects base media folders and locates existing TV shows (`Shows/`, `shows/`, `TV Shows/`, `TV/`, `Series/`) and movies directories (`Movies/`, `movies/`, `Films/`).
 - **Resilient Dependency Management**: Automatically handles Debian/Ubuntu/TrueNAS **externally-managed PEP 668 environments** using `apt`, user packages, or dedicated virtual environments.
+- **Dynamic Rclone Capability Detection**: Automatically probes installed `rclone` features so advanced flags (`--order-by`, `--check-first`, `--multi-thread-streams`) only activate if supported, ensuring universal compatibility across older NAS versions (rclone < 1.65) and modern distributions alike.
 - **Zero Hardcoded Paths**: Runs out-of-the-box in multiple server topologies without requiring code edits.
 
 ---
@@ -33,11 +36,15 @@ flowchart LR
     Cleanup -->|move| Archive["Archive Folder (processed/)"]
 ```
 
-1. **`putsync.sh` (Sync Orchestrator)**:
-   - Uses `flock` on a lockfile to prevent overlapping or concurrent runs.
-   - Triggers `rclone copy` from remote (`put.io:/`) to the local staging folder (`DOWNLOADS_DIR`).
-   - Logs execution progress and timestamps to the configured log file.
-   - Automatically executes `sorter.py` using the configured or dedicated virtual environment Python interpreter.
+1. **`putsync.sh` (Sync & Orchestration Pipeline)**:
+   - Uses `flock` on a non-blocking lockfile to prevent overlapping runs from cron or manual invocations.
+   - Dynamically resolves target user without hardcoding (`$TARGET_USER`, `$SUDO_USER`, `.config` ownership, repo owner, or UID ≥ 1000).
+   - Automatically checks and maintains live symlinks in `~/.local/bin/` so commands update automatically with `git pull`.
+   - **Checkpointing & Resilience**: Transfers 1 file at a time sequentially from smallest to largest (`--transfers 1`). Finished files act as permanent checkpoints and are never re-downloaded if an in-progress transfer is interrupted.
+   - **High Throughput Multi-Streaming**: Downloads in 8 parallel chunk streams (`--multi-thread-streams 8`), maximizing throughput on 5G UW carrier aggregation and high-speed broadband connections.
+   - **Universal Rclone Compatibility**: Dynamically inspects rclone help capabilities so flags like `--order-by`, `--check-first`, and `--multi-thread-streams` adapt automatically across all rclone versions without failing on older NAS releases.
+   - Logs execution progress and timestamps cleanly to the configured log file.
+   - Automatically executes `sorter.py` using the appropriate environment Python interpreter.
 
 2. **`sorter.py` (Parser, Hardlinker, Subtitle Downloader & Cleanup Engine)**:
    - Evaluates storage targets using lazy discovery or explicit config parameters.
@@ -129,6 +136,8 @@ All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via en
 | `LOG_FILE` | Log output file for transfers and sorting | `~/.local/state/jellyfin-reel-sort/sync.log` |
 | `LOCK_FILE` | Lockfile used by `flock` to prevent collisions | `/tmp/jellyfin_reel_sort.lock` |
 | `SORTER_PATH` | Path to executable `sorter.py` | Installed script path |
+| `SYNC_TRANSFERS` | Simultaneous file transfers (`1` enforces sequential checkpointing) | `1` |
+| `SYNC_STREAMS` | Parallel multi-threaded chunk streams per file (optimized for 5G UW) | `8` |
 
 ---
 
@@ -154,8 +163,13 @@ Movies/
 ## Manual Execution & Automation
 
 ### Run Manually
+Because all scripts are automatically symlinked to `~/.local/bin/` (which is in standard user `$PATH`), you can run them directly from any terminal prompt:
 ```bash
-~/.local/bin/putsync.sh
+putsync.sh
+```
+Or run directly from your local repository clone:
+```bash
+~/jellyfin-reel-sort/putsync.sh
 ```
 Or run the hardlink sorter independently:
 ```bash
@@ -163,12 +177,18 @@ python3 ~/.local/bin/sorter.py
 ```
 
 ### Automation via Cron
-To run every 30 minutes automatically, add this entry to `crontab -e`:
+You can run automated syncs on a recurring schedule (e.g. every 5 or 15 minutes). The built-in `flock` ensures subsequent executions exit safely without overlapping if a previous transfer is still in-progress.
 
+**Option A: User Crontab (Recommended — `crontab -e`)**
 ```cron
-*/30 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
+*/5 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
 ```
-*(The built-in `flock` ensures subsequent executions exit safely if a transfer is still ongoing).*
+
+**Option B: Root Crontab (`sudo crontab -e`)**
+```cron
+*/5 * * * * /home/<username>/.local/bin/putsync.sh >/dev/null 2>&1
+```
+*(When run as root, `putsync.sh` automatically resolves `<username>`, loads the user's configuration, and maintains proper file ownership).*
 
 ---
 
@@ -215,9 +235,13 @@ Or test downloading and sorting a specific movie interactively:
 ```
 
 ### 5. Automated Crontab Schedule
-To run background syncs automatically every 5 minutes, add this line to your root crontab (`sudo crontab -e`):
+To run background syncs automatically every 5 minutes, add to your user crontab (`crontab -e`):
 ```cron
-*/5 * * * * /home/<username>/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
+*/5 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
+```
+Or to root crontab (`sudo crontab -e`):
+```cron
+*/5 * * * * /home/<username>/.local/bin/putsync.sh >/dev/null 2>&1
 ```
 
 ---
