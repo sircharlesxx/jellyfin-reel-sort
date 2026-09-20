@@ -1,112 +1,92 @@
-# 🎬 Jellyfin Reel Sort
+<div align="center">
+  <h1>🎬 Jellyfin Reel Sort</h1>
+  <p><b>Your personal, automated media butler for Jellyfin!</b></p>
 
-> **Automated, rock-solid media synchronization, smart hardlinking, subtitle fetching, and library management for Jellyfin.**
-
-`jellyfin-reel-sort` bridges your cloud storage (such as Put.io via `rclone`) directly into your Jellyfin media server. It downloads media at maximum connection speeds, organizes titles into standardized Jellyfin structures using **zero-space hardlinks**, and keeps your library refreshed automatically.
+  <p>
+    <img src="https://img.shields.io/badge/Bash-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white" alt="Bash" />
+    <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+    <img src="https://img.shields.io/badge/Jellyfin-00A4DC?style=for-the-badge&logo=jellyfin&logoColor=white" alt="Jellyfin" />
+  </p>
+</div>
 
 ---
 
-## 🌟 High-Level Architecture
+## 👋 Welcome to Jellyfin Reel Sort!
+
+Imagine having a magic assistant that constantly checks your cloud storage (like Put.io), downloads new movies and TV shows at lightning speed, organizes them perfectly for Jellyfin, and cleans up the mess—all without using up double the space on your hard drive! 
+
+That's exactly what **Jellyfin Reel Sort** does. 🍿
+
+---
+
+## 🚀 How It Works (The Simple Version)
+
+Here is the journey of your media, from the cloud directly to your TV screen:
 
 ```mermaid
 flowchart LR
-    Cloud["☁️ Put.io / Cloud Remote"] -->|rclone copy| Ingest["📥 ~/Jellyfin/downloads/"]
-    Ingest -->|sorter.py| Hardlink["🔗 Zero-Space Hardlinker"]
-    Hardlink -->|TV Shows| Shows["📺 Shows/{Title}/Season XX/"]
-    Hardlink -->|Movies| Movies["🎬 Movies/{Title} ({Year})/"]
-    Shows --> Jellyfin["🍿 Jellyfin Server"]
-    Movies --> Jellyfin
-    Jellyfin -->|Auto-Scan Notification| API["📡 POST /Library/Refresh"]
+    Cloud(("☁️\nCloud Storage\n(e.g., Put.io)")) -->|1. Downloads| Ingest[/"📥\nDownloads Folder"/]
+    Ingest -->|2. Sorts & Links| Magic{"🪄\nReel Sort\nMagic"}
+    Magic -->|TV Shows| Shows[/"📺\nTV Shows Folder"/]
+    Magic -->|Movies| Movies[/"🎬\nMovies Folder"/]
+    Shows --> JF{"🍿\nJellyfin Server"}
+    Movies --> JF
 ```
+
+1. **Downloads:** We securely pull your files from the cloud to your local `downloads` folder.
+2. **Sorts & Links:** We magically link the files into beautiful, organized folders for Jellyfin (`Movies/` and `Shows/`). 
+3. **Enjoy:** We tap Jellyfin on the shoulder to let it know new stuff is ready to watch!
 
 ---
 
-## 💡 How Hardlinks Save Your Disk Space
+## 🤯 The Magic of "Zero-Space" Hardlinks
 
-Standard download setups often duplicate files: one copy in `downloads/` and another in `Movies/`, burning double the storage. 
+Normally, if you download a 10GB movie and then copy it to your `Movies` folder, you just used **20GB** of space! 
 
-`jellyfin-reel-sort` uses **filesystem hardlinks**. Both paths point to the **exact same physical data on disk**:
+We use a neat trick called **Hardlinking**. Think of it like a magical portal. 
 
 ```mermaid
 flowchart TD
-    subgraph Disk["Physical Hard Drive Storage (Single Filesystem)"]
-        Inode["Physical Video Data on Disk (e.g. 10 GB Inode #12345)"]
+    subgraph Disk["Your Hard Drive"]
+        Video["10 GB Movie Data"]
     end
-    DownloadFile["File 1: ~/Jellyfin/downloads/Movie.2024.1080p.mkv"] -->|Pointer 1| Inode
-    LibraryFile["File 2: ~/Jellyfin/media/Movies/Movie (2024)/Movie (2024).mkv"] -->|Pointer 2| Inode
+    Downloads["📂 Downloads Folder\n(Movie_Release_XviD.mkv)"] -.->|Points to| Video
+    Movies["📂 Movies Folder\n(My Movie (2024).mkv)"] -.->|Points to| Video
 ```
 
-### Why This Is Better:
-- **0 Extra Disk Space**: A 10 GB movie consumes exactly 10 GB total, even though it appears in both folders.
-- **Continuous Seeding & Skipping**: Your download stays intact in `downloads/`, allowing `rclone` to skip already-downloaded files in milliseconds.
-- **Clean Jellyfin UI**: Jellyfin sees clean, beautiful filenames (`Inception (2010)/Inception (2010).mkv`) instead of raw release names.
+- 📉 **Saves Space:** Both folders look at the exact same file. A 10GB movie only takes up 10GB total!
+- ✨ **Looks Beautiful:** Jellyfin sees a perfectly named file (e.g., `Inception (2010).mkv`), while the messy original file stays in your downloads folder.
 
 ---
 
-## 🛠️ The 5 Core Tools
+## ⚡ Supercharged Downloading (Built for 5G)
 
-All tools live in your repository and automatically live-symlink themselves into `~/.local/bin/` on startup. Once pulled, you can run them directly from anywhere!
+Whether you are on home broadband or a cellular 5G connection, we've tuned the downloads to be incredibly fast and resilient.
 
-```mermaid
-flowchart TD
-    User["👤 User / Automation"]
-    User -->|Scheduled 5-min sync| Putsync["⚡ putsync.sh (Automated Ingest)"]
-    User -->|Fast single movie| GetMovie["🎯 get_movie.sh (Interactive Downloader)"]
-    User -->|First-time bulk import| InitialImport["📦 initial-import.sh (Fast Bulk Linker)"]
-    User -->|Reclaim disk space| Delete["🗑️ delete.sh (Space Cleaner)"]
-    User -->|Docker maintenance| DockerSetup["🐳 jellyfin-docker-setup.sh (Clean Setup)"]
-```
-
-| Command | Alias | What It Does |
-| :--- | :--- | :--- |
-| `putsync.sh` | — | **Main automated sync**: Downloads new media sequentially, hardlinks it, and pings Jellyfin. |
-| `get_movie.sh` | `get_media.sh` | **Single-item downloader**: Lets you browse or search remote media and pull it down with custom concurrency. |
-| `initial-import.sh` | `import_media.sh` | **Bulk library importer**: Instantly sorts and links pre-existing files from `downloads/` into your library. |
-| `delete.sh` | — | **Space cleaner**: Interactively browse and delete items from Jellyfin, downloads, and cloud remote together. |
-| `jellyfin-docker-setup.sh` | `docker-reinstall.sh` | **Docker installer**: Factory resets or installs official Jellyfin Docker with GPU acceleration and correct mounts. |
+- **Fast:** We split a single movie into **8 separate puzzle pieces** and download them all at the same time. This tricks 5G networks into giving you maximum speed (up to 240 Mbps)!
+- **Safe:** If your internet drops or the power goes out, you never lose progress. Completed files are permanently saved like a checkpoint.
 
 ---
 
-## 🔄 Automated Ingest & Checkpoint Pipeline
+## 🛠️ Your Magic Wand Toolkit
 
-When `putsync.sh` runs (manually or via cron), it executes this resilient sequence:
+Once installed, these easy commands are available to use from anywhere on your server!
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Cron as Cron / User
-    participant Script as putsync.sh
-    participant Cloud as Put.io Cloud
-    participant Disk as Local Downloads
-    participant Sorter as sorter.py
-    participant JF as Jellyfin Server
+| Command | What it does |
+| :--- | :--- |
+| ⚡ `putsync.sh` | **The Auto-Sync:** Checks the cloud, downloads new stuff, sorts it, and tells Jellyfin. Run this on a schedule! |
+| 🎯 `get_movie.sh` | **The Quick Grab:** Search your cloud for a specific movie and download it right now. |
+| 📦 `initial-import.sh` | **The Organizer:** Already have a messy folder of downloads? This instantly sorts and links them all into Jellyfin. |
+| 🗑️ `delete.sh` | **The Janitor:** Easily delete a movie from Jellyfin, your hard drive, AND the cloud all at once to save space. |
+| 🐳 `jellyfin-docker-setup.sh` | **The Installer:** Quickly setup or reset a pristine Jellyfin server using Docker. |
 
-    Cron->>Script: Trigger sync
-    Script->>Script: Acquire lock (/tmp/jellyfin_reel_sort.lock)
-    Script->>Script: Dynamically resolve active user & config
-    Script->>Script: Live-symlink CLI tools into ~/.local/bin/
-    Script->>Cloud: Check remote files (Smallest to Largest)
-    loop Sequential Checkpointed Transfer
-        Script->>Disk: Download 1 file (8 parallel chunk streams)
-        Note over Script,Disk: Each completed file is permanently safe!
-    end
-    Script->>Sorter: Run media sorter & hardlinker
-    Sorter->>Disk: Create hardlinks into Shows/ and Movies/
-    Sorter->>JF: Trigger library refresh (/Library/Refresh)
-    Script->>Script: Release lock & log summary
-```
-
-### Built-in Safety Features:
-1. **Non-Blocking Lock (`flock`)**: If a sync is already running, new runs exit immediately so transfers never collide.
-2. **Sequential Checkpointing (`--transfers 1`)**: Downloads files one-by-one from smallest to largest. If interrupted, completed files stay safe on disk and will never re-download.
-3. **In-Flight Protection**: The sorter automatically skips `.partial`, `.crdownload`, `.tmp` files, stubs under 1MB, and files modified within the last 10 seconds.
-4. **Universal Rclone Compatibility**: Dynamically inspects `rclone copy --help` so advanced flags (`--order-by`, `--check-first`, `--multi-thread-streams`) only apply if supported, preventing crashes on older NAS releases.
+> 💡 **Tip:** We automatically create shortcuts for you, so you can just type `get_movie.sh` anywhere without navigating to a specific folder!
 
 ---
 
-## 🚀 Quick Installation
+## 🏃‍♂️ Quick Installation
 
-Run the automated installer on your NAS or Linux server:
+Ready to get started? Run this on your NAS or Linux server:
 
 ```bash
 git clone https://github.com/sircharlesxx/jellyfin-reel-sort.git
@@ -114,98 +94,58 @@ cd jellyfin-reel-sort
 ./install.sh
 ```
 
-### What `install.sh` handles automatically:
-- **Zero-Friction Python**: Handles modern Debian/Ubuntu `PEP 668` restrictions by configuring a dedicated virtual environment if necessary.
-- **Auto-Discovery**: Scans for existing media and download directories across local drives and Synology `/volume1/` shares.
-- **Rclone Detection**: Detects existing Put.io remotes automatically.
-- **Jellyfin Container Detection**: Probes active Docker port bindings or localhost port `8096`.
-
----
-
-## ⚡ Performance & Cellular (5G UW) Optimization
-
-Through real-world link benchmarks on cellular 5G Ultra Wideband and high-speed broadband, concurrency defaults are tuned for maximum throughput:
-
-- **`SYNC_TRANSFERS=1`**: Transfers 1 file at a time. This guarantees that every completed file acts as a permanent checkpoint.
-- **`SYNC_STREAMS=8`**: Splits that single file into **8 simultaneous HTTP range streams**, triggering aggressive 5G carrier aggregation and pushing download speeds up to **~190–240 Mbps (~25–30 MB/s)**.
-
-### Customizing Concurrency On-The-Fly:
-```bash
-# Example: Download with 12 streams for maximum throughput
-SYNC_STREAMS=12 putsync.sh
-
-# Example: Run get_movie.sh and choose custom concurrency when prompted
-get_movie.sh
-```
+Our smart installer will automatically find your media folders, configure your cloud connection, and set everything up for you!
 
 ---
 
 ## 📖 Everyday Cheat Sheet
 
-### 1. Run a Sync Right Now
-```bash
-putsync.sh
-```
+Here are the most common things you might want to do:
 
-### 2. Download a Specific Movie Quickly
+### 1. "I want to download a specific movie right now!"
+Just type this and follow the prompts:
 ```bash
 get_movie.sh
 ```
 
-### 3. Bulk Import Pre-Existing Media
-If you already have a folder full of downloaded movies or TV episodes:
-```bash
-# Blazing-fast mode (creates hardlinks in seconds, skips online subtitle API delays)
-initial-import.sh --fast
+### 2. "I want it to automatically sync every 5 minutes!"
+You can tell your server to run the sync automatically using a `cron` schedule. 
 
-# Or import from a custom folder:
-initial-import.sh /path/to/my/folder --fast
-```
-
-### 4. Delete Media to Free Disk Space
-```bash
-delete.sh
-```
-*(Prompts to remove the title from your Jellyfin library, your downloads folder, and optionally your Put.io remote).*
-
-### 5. Automated Crontab Schedule
-To run background syncs automatically every 5 minutes:
-
-**User Crontab (Recommended — `crontab -e`):**
+Type `crontab -e` in your terminal, and add this line at the bottom:
 ```cron
 */5 * * * * ~/.local/bin/putsync.sh >/dev/null 2>&1
 ```
 
-**Root Crontab (`sudo crontab -e`):**
-```cron
-*/5 * * * * /home/<username>/.local/bin/putsync.sh >/dev/null 2>&1
+### 3. "My hard drive is full, I need to delete some stuff!"
+Run the cleaner to remove media everywhere at once:
+```bash
+delete.sh
 ```
-*(When executed via root cron, `putsync.sh` automatically detects the real target user and keeps all file ownership aligned).*
+
+### 4. "I already have a bunch of downloads, organize them!"
+```bash
+initial-import.sh --fast
+```
 
 ---
 
-## ⚙️ Configuration Reference
+## ⚙️ Advanced Settings
 
-All settings can be customized in `~/.config/jellyfin-reel-sort.conf` (or via environment variables):
+Want to peek under the hood? You can edit `~/.config/jellyfin-reel-sort.conf` to customize exactly how things work. 
 
-| Setting | Purpose | Default |
+| Setting | What it means | Default |
 | :--- | :--- | :--- |
-| `DOWNLOADS_DIR` | Ingest directory where downloads arrive | `~/Jellyfin/downloads/` |
-| `MEDIA_DIR` | Base Jellyfin library directory | `~/Jellyfin/media/` |
-| `SHOWS_DIR` | Destination directory for TV Shows | `~/Jellyfin/media/Shows/` |
-| `MOVIES_DIR` | Destination directory for Movies | `~/Jellyfin/media/Movies/` |
-| `SYNC_TRANSFERS` | Number of simultaneous file transfers (`1` for checkpointing) | `1` |
-| `SYNC_STREAMS` | Multi-threaded parallel chunk streams per file | `8` |
-| `CLEANUP_MODE` | Post-sort source handling (`none`, `delete`, or `move`) | `none` *(keeps hardlinks intact)* |
-| `REMOTE_NAME` | Rclone remote name configured for your cloud storage | `put.io` |
-| `JELLYFIN_URL` | Base URL of your Jellyfin server | `http://localhost:8096` |
-| `JELLYFIN_API_KEY`| API key to trigger automatic library refreshes | Optional |
-| `DOWNLOAD_SUBTITLES`| Automatically query online subtitle providers | `true` |
-| `SUBTITLE_LANGUAGES`| Subtitle language code(s) comma-separated | `en` |
+| `DOWNLOADS_DIR` | Where raw downloads land | `~/Jellyfin/downloads/` |
+| `MEDIA_DIR` | Where Jellyfin looks for media | `~/Jellyfin/media/` |
+| `SYNC_STREAMS` | How many puzzle pieces to split downloads into (higher = faster) | `8` |
+| `CLEANUP_MODE` | Should we delete the raw download after linking? (`none`, `delete`, or `move`) | `none` (saves the file for seeding) |
+| `DOWNLOAD_SUBTITLES` | Automatically fetch subtitles for your media? | `true` |
 
 ---
 
-## 👥 Contributors & Acknowledgements
+## 🤝 The Team
 
-- **Charles Peters** ([@sircharlesxx](https://github.com/sircharlesxx)) — Project Creator & Maintainer
-- **Kyle Keller** ([@kellerk563](https://github.com/kellerk563)) — Core Contributor: Designed and implemented the source cleanup pipeline (`delete` / `move` archival workflow) to manage extra and unwanted download files, along with unrecognized media pattern detection.
+Built with ❤️ by movie nerds, for movie nerds.
+
+- **Charles Peters** ([@sircharlesxx](https://github.com/sircharlesxx)) — Creator & Main Developer
+- **Kyle Keller** ([@kellerk563](https://github.com/kellerk563)) — Core Contributor (Cleanup Pipeline & Magic Janitor)
