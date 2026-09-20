@@ -101,6 +101,20 @@ Our smart installer will automatically find your media folders, configure your c
 
 ---
 
+## 🗑️ How The "Magic Janitor" Works (`delete.sh`)
+
+If you just delete a movie inside the Jellyfin app, it only removes the *link*. The original massive file is still hiding in your `downloads/` folder, secretly eating up your hard drive space! And worse, if it's still in your cloud storage, the auto-sync might just download it again tomorrow.
+
+To solve this, we built `delete.sh`. When you run it, it:
+1. **Asks What You Want:** Gives you an interactive menu to browse TV Shows, browse Movies, or search by keyword.
+2. **Finds Every Trace:** Locates the perfectly named file in your `media/` library AND the messy original file in your `downloads/` folder.
+3. **Calculates Space:** Shows you exactly how much local disk space you are about to reclaim.
+4. **Performs a Deep Clean:** Deletes the local files to instantly free up your hard drive.
+5. **(Optional) Cloud Purge:** Asks if you want to delete the file from your cloud storage (e.g., Put.io) too, ensuring it never gets auto-downloaded again.
+6. **Updates Jellyfin:** Automatically pings your Jellyfin server so the movie instantly disappears from your screen.
+
+---
+
 ## 📖 Everyday Cheat Sheet
 
 Here are the most common things you might want to do:
