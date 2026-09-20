@@ -871,7 +871,7 @@ def batch_fetch_subtitles(pending):
     return total_saved
 
 
-def process_files():
+def process_files(target=None):
     load_config()
     print(f"[+] Ingest downloads directory: {DOWNLOADS_DIR}")
     print(f"[+] TV Shows directory:         {SHOWS_DIR}")
@@ -890,9 +890,15 @@ def process_files():
         status_note = "Not detected on localhost"
     print(f"[+] Jellyfin instance:          {status_note}")
 
-    if not os.path.exists(DOWNLOADS_DIR):
-        print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
-        return
+    if target and os.path.isfile(target):
+        walk_items = [(os.path.dirname(target), [], [os.path.basename(target)])]
+    elif target and os.path.isdir(target):
+        walk_items = os.walk(target)
+    else:
+        if not os.path.exists(DOWNLOADS_DIR):
+            print(f"Downloads directory does not exist: {DOWNLOADS_DIR}")
+            return
+        walk_items = os.walk(DOWNLOADS_DIR)
 
     os.makedirs(SHOWS_DIR, exist_ok=True)
     os.makedirs(MOVIES_DIR, exist_ok=True)
@@ -906,7 +912,7 @@ def process_files():
     subtitle_pending = []  # collect all files needing subtitle lookup
 
     # --- Phase 1: Link all media files (no network I/O) ---
-    for root, dirs, files in os.walk(DOWNLOADS_DIR):
+    for root, dirs, files in walk_items:
         for file in files:
             if not file.endswith(('.mkv', '.mp4', '.avi')):
                 continue
@@ -1077,5 +1083,6 @@ def process_files():
         print("\n[+] Sort summary: No new media or subtitles added.")
 
 if __name__ == "__main__":
-    process_files()
+    target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+    process_files(target=target)
 
