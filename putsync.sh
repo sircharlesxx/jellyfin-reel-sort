@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # ==============================================================================
 # Jellyfin Reel Sort — Main Cloud Ingest & Sort Pipeline
@@ -189,7 +190,7 @@ if command -v rclone >/dev/null 2>&1; then
     else
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            --log-file="$LOG_FILE"
+            -v --stats 60s --log-file="$LOG_FILE"
     fi
 else
     log "Error: rclone not found in PATH. Skipping remote copy."
