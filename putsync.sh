@@ -190,11 +190,11 @@ if command -v rclone >/dev/null 2>&1; then
     if [ -t 1 ]; then
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            --progress --log-file="$LOG_FILE"
+            --progress -v --stats 15s --log-file="$LOG_FILE"
     else
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            -v --stats 60s --log-file="$LOG_FILE"
+            -v --stats 15s --log-file="$LOG_FILE"
     fi
 else
     log "Error: rclone not found in PATH. Skipping remote copy."
