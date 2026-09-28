@@ -178,6 +178,26 @@ download_and_sort() {
         fi
     fi
 
+    # Acquire lock file to protect against background cron runs interrupting us
+    local lock_file="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
+    touch "$lock_file" 2>/dev/null || true
+    chmod 666 "$lock_file" 2>/dev/null || true
+    exec 200>"$lock_file"
+
+    if ! flock -n 200; then
+        local active_pid
+        active_pid=$(head -n 1 "$lock_file" 2>/dev/null || echo "unknown")
+        echo -e "${YELLOW}[!] A background sync or download is currently active (PID: $active_pid).${RESET}"
+        read -r -p "Wait for background sync to finish before downloading? [Y/n]: " wait_ans
+        if [[ ! "$wait_ans" =~ ^[Nn]$ ]]; then
+            echo -e "${CYAN}Waiting for background sync to complete...${RESET}"
+            flock 200
+        else
+            return
+        fi
+    fi
+    echo $$ > "$lock_file"
+
     local -a dl_flags=(
         --size-only
         --progress
@@ -231,6 +251,12 @@ download_and_sort() {
     echo -e "${GREEN}${BOLD}======================================================${RESET}"
     echo -e "${GREEN}${BOLD}All done! Your movie is now available in Jellyfin.${RESET}"
     echo -e "${GREEN}${BOLD}======================================================${RESET}"
+    
+    # Release lock file
+    echo "" > "$lock_file" 2>/dev/null || true
+    flock -u 200 2>/dev/null || true
+    exec 200>&- 2>/dev/null || true
+
     read -r -p "Press Enter to return to menu..." _
 }
 

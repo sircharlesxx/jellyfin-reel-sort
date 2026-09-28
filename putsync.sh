@@ -13,16 +13,21 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 #   6. Library Notification: Signals Jellyfin to scan for newly organized media.
 # ==============================================================================
 
-# 1. Prevent concurrent runs using non-blocking lock
+# 1. Prevent concurrent runs using kernel-level non-blocking flock in /tmp/
 LOCK_FILE="${LOCK_FILE:-/tmp/jellyfin_reel_sort.lock}"
-trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
-exec 200>"$LOCK_FILE"
+touch "$LOCK_FILE" 2>/dev/null || true
 chmod 666 "$LOCK_FILE" 2>/dev/null || true
+exec 200>"$LOCK_FILE"
 
 if ! flock -n 200; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sync already running. Exiting."
+    RUNNING_PID=$(head -n 1 "$LOCK_FILE" 2>/dev/null || true)
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sync or download already in progress (PID: ${RUNNING_PID:-unknown}). Exiting cleanly without interrupting."
     exit 0
 fi
+
+# Record current PID in lock file (do NOT remove lock file on exit to avoid flock race condition)
+echo $$ > "$LOCK_FILE"
+trap 'echo "" > "$LOCK_FILE" 2>/dev/null || true' EXIT INT TERM
 
 # 2. Resolve script location and target user dynamically
 SOURCE_FILE="${BASH_SOURCE[0]}"
@@ -135,20 +140,21 @@ log() {
     fi
 }
 
-# 4. Network Warm-Up & Thermal Cool-Off (Cellular / 5G Optimization)
+# 4. Check for active downloads & Network Warm-Up
 if pgrep -x "rclone" >/dev/null; then
-    log "An rclone download is already running on the system. Skipping network warm-up."
-else
-    # Runs a quick 5-second download to trigger carrier aggregation, logs the speed, 
-    # then sleeps for 15 seconds to let the modem cool down before the heavy sync begins.
-    log "=== Running 5-second network warm-up / speed test ==="
-    SPEED_BPS=$(curl -o /dev/null -s -w "%{speed_download}" -m 5 http://speedtest.chicago.linode.com/100MB-chicago.bin || echo "0")
-    SPEED_MBPS=$(awk -v bps="$SPEED_BPS" 'BEGIN { printf "%.2f", (bps * 8) / 1000000 }')
-    log "Warm-up speed: ${SPEED_MBPS} Mbps"
-
-    log "=== Cooling off modem for 15 seconds to prevent thermal throttling ==="
-    sleep 15
+    log "[!] An active rclone download process is already running on this system. Exiting cleanly to protect active download."
+    exit 0
 fi
+
+# Runs a quick 5-second download to trigger carrier aggregation, logs the speed, 
+# then sleeps for 15 seconds to let the modem cool down before the heavy sync begins.
+log "=== Running 5-second network warm-up / speed test ==="
+SPEED_BPS=$(curl -o /dev/null -s -w "%{speed_download}" -m 5 http://speedtest.chicago.linode.com/100MB-chicago.bin || echo "0")
+SPEED_MBPS=$(awk -v bps="$SPEED_BPS" 'BEGIN { printf "%.2f", (bps * 8) / 1000000 }')
+log "Warm-up speed: ${SPEED_MBPS} Mbps"
+
+log "=== Cooling off modem for 15 seconds to prevent thermal throttling ==="
+sleep 15
 
 # 5. Ingest new downloads from cloud with Checkpointing & Resilience
 log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
