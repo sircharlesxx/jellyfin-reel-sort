@@ -147,9 +147,32 @@ log() {
     fi
 }
 
-# 4. Check for active downloads & Network Warm-Up
+# 4. Guard against orphaned rclone processes using a dedicated PID file.
+#
+# The flock on fd 200 is only held while THIS bash process is alive. If bash is killed
+# (SIGKILL, SSH disconnect, OOM, etc.) while rclone is still downloading, the flock is
+# released by the kernel — but rclone keeps running as an orphan. The next cron run would
+# see an empty lock, acquire it, and start a SECOND rclone download on top of the first one.
+#
+# The PID file survives bash dying. We check it first, before anything else touches the network.
+RCLONE_PID_FILE="/tmp/jellyfin_reel_sort_rclone.pid"
+
+# Check for a previously saved rclone PID that is still alive
+if [ -f "$RCLONE_PID_FILE" ]; then
+    SAVED_PID=$(cat "$RCLONE_PID_FILE" 2>/dev/null | tr -dc '0-9' || true)
+    if [ -n "$SAVED_PID" ] && kill -0 "$SAVED_PID" 2>/dev/null; then
+        log "[!] Active rclone download still running from a previous session (PID: $SAVED_PID). Exiting to protect it."
+        exit 0
+    else
+        # PID is stale — rclone finished or was killed. Clean up.
+        log "[i] Stale rclone PID file found (PID: ${SAVED_PID:-?}). Cleaning up."
+        rm -f "$RCLONE_PID_FILE"
+    fi
+fi
+
+# Belt-and-suspenders: also check for any rclone process by name
 if pgrep -x "rclone" >/dev/null; then
-    log "[!] An active rclone download process is already running on this system. Exiting cleanly to protect active download."
+    log "[!] An rclone process is running (no PID file, may be from get_movie.sh). Exiting to be safe."
     exit 0
 fi
 
@@ -223,18 +246,29 @@ fi
 # NOTE: No pre-sync rclone lsf call here — that would open a second TCP connection to the remote,
 # causing congestion on metered/cellular links. Duplicate file detection is handled by:
 #   1. --size-only: skips any file whose byte count already matches on disk (completed downloads)
-#   2. The lock file at /tmp/jellyfin_reel_sort.lock: prevents this script from ever running
-#      concurrently with itself or with get_movie.sh
+#   2. The flock + rclone PID file: prevents this script from ever running concurrently
 
 if command -v rclone >/dev/null 2>&1; then
+    # Run rclone in the background, save its PID, then wait for it.
+    # Saving the PID means: even if THIS bash process is killed, the next cron run can see
+    # the orphaned rclone PID and refuse to start a competing download.
     if [ -t 1 ]; then
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            --progress -v --stats 1m --log-file="$LOG_FILE"
+            --progress -v --stats 1m --log-file="$LOG_FILE" &
     else
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            -v --stats 1m --log-file="$LOG_FILE"
+            -v --stats 1m --log-file="$LOG_FILE" &
+    fi
+    RCLONE_PID=$!
+    echo "$RCLONE_PID" > "$RCLONE_PID_FILE"
+    log "rclone started (PID: $RCLONE_PID). Monitoring transfer..."
+    wait "$RCLONE_PID"
+    RCLONE_EXIT=$?
+    rm -f "$RCLONE_PID_FILE"
+    if [ "$RCLONE_EXIT" -ne 0 ]; then
+        log "[!] rclone exited with code $RCLONE_EXIT (partial failures expected with --ignore-errors)."
     fi
 else
     log "Error: rclone not found in PATH. Skipping remote copy."
