@@ -143,6 +143,77 @@ initial-import.sh --fast
 
 ---
 
+## 🛡️ Long Downloads & Reliability
+
+Reel Sort is designed to handle very large files and long overnight downloads without supervision. Here's exactly how it protects you.
+
+---
+
+### 🔒 The Lock File: No Two Downloads at Once
+
+Every time `putsync.sh` or `get_movie.sh` starts a download, it acquires an **exclusive kernel-level lock** at `/tmp/jellyfin_reel_sort.lock` using `flock`.
+
+```text
+putsync.sh (cron)          get_movie.sh (you)
+      │                          │
+      ▼                          ▼
+ Tries to acquire          Tries to acquire
+ /tmp/jellyfin_reel_sort.lock
+      │                          │
+  ✅ Gets lock               ❌ Lock is busy
+  Starts download            Exits cleanly or waits
+```
+
+- **If the cron fires while you're already downloading:** It immediately sees the lock is held and logs `"Sync already in progress. Exiting cleanly."` No competing download starts. No bandwidth is wasted.
+- **If rclone is already running:** Even before checking the lock, `putsync.sh` checks `pgrep rclone`. If any `rclone` process is active, it exits immediately.
+- **The lock file is never deleted:** This prevents a subtle race condition where a departing process could wipe the lock file and allow a new process to steal it mid-download.
+
+---
+
+### ♻️ How Big Downloads Resume Automatically
+
+If your connection drops mid-download, **nothing is lost.** The next time `putsync.sh` runs:
+
+1. `--size-only` compares the byte count of every local file against the remote.
+2. Files already fully downloaded (exact size match) are **skipped instantly** — no re-checking, no re-downloading.
+3. The file that was interrupted has a smaller size than the remote → rclone **resumes it from the beginning** of that file automatically.
+4. All retries are handled internally before giving up on a file: **50 retries** with a **30-second gap** between each, giving cellular and flaky connections plenty of time to recover.
+
+---
+
+### ⏱️ How It Handles Cellular & Flaky Networks
+
+| Problem | Protection |
+|:---|:---|
+| Modem pauses data flow during band switching | `--timeout 0` — the IO idle timer is fully disabled. rclone waits indefinitely for data to resume. |
+| Connection drops entirely | `--retries 50` + `--retries-sleep 30s` — 50 chances to reconnect, each after a 30-second wait. |
+| Exponential backoff growing out of control | `--max-backoff 5m` — retry waits are capped at 5 minutes maximum. |
+| One bad file blocks the whole queue | `--ignore-errors` — permanently failed files are skipped and the rest of the queue continues. |
+| Modem needs time to acquire UW band at start | 5-second warm-up download + 15-second cool-off before sync begins. |
+
+---
+
+### 📋 Watching an Active Download in Real Time
+
+If `putsync.sh` is running from cron in the background, you can follow all active transfer progress live:
+
+```bash
+tail -f /var/log/jellyfin-reel-sort.log
+```
+
+Every **1 minute**, rclone logs a stats block like this:
+```text
+Transferred:   12.345 GiB / 45.678 GiB, 27%, 28.4 MiB/s, ETA 20m15s
+Transferred:            0 / 1, 0%
+Elapsed time:      7m30.0s
+Transferring:
+ * Show.Name.S04E09.2160p.mkv: 27% /45.68G, 28.4M/s, 20m15s
+```
+
+The log is automatically rotated when it reaches **50MB**, keeping the last run in `.log.1`.
+
+---
+
 ## ⚙️ Advanced Settings
 
 Want to peek under the hood? You can edit `~/.config/jellyfin-reel-sort.conf` to customize exactly how things work. 
