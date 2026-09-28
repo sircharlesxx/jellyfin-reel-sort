@@ -321,7 +321,7 @@ LOG_FILE=\"$TARGET_HOME/.local/state/jellyfin-reel-sort/sync.log\"
 LOCK_FILE=\"/tmp/jellyfin_reel_sort.lock\"
 SORTER_PATH=\"$INSTALL_DIR/sorter.py\"
 SYNC_TRANSFERS=\"1\"
-SYNC_STREAMS=\"8\"
+SYNC_STREAMS=\"4\"
 CONF_EOF"
 run_sudo chown "$TARGET_UID:$TARGET_GID" "$CONF_PATH"
 

@@ -159,11 +159,11 @@ mkdir -p "$DOWNLOADS_DIR"
 #   it is permanently locked in. If the connection drops, it resumes from the next file (Checkpointing).
 # - Size ordering (--order-by size,asc): Finishes smaller files first so they are immediately preserved.
 # - Pre-flight check (--check-first): Fast-skips all completed files in memory before queueing.
-# - Multi-stream chunks (--multi-thread-streams 8): Utilizes concurrent HTTP Range requests to open 
-#   8 parallel streams per file, forcing carriers to allocate maximum bandwidth (saturates gigabit/5G).
+# - Multi-stream chunks (--multi-thread-streams 4): Utilizes concurrent HTTP Range requests to open 
+#   4 parallel streams per file, forcing carriers to allocate maximum bandwidth (saturates gigabit/5G).
 # - Deep retries (--retries 10, --low-level-retries 20): Automatically recovers from network drops.
 SYNC_TRANSFERS="${SYNC_TRANSFERS:-1}"
-SYNC_STREAMS="${SYNC_STREAMS:-8}"
+SYNC_STREAMS="${SYNC_STREAMS:-4}"
 SYNC_RETRIES="${SYNC_RETRIES:-10}"
 SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
 
