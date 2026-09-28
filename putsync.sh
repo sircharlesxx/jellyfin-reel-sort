@@ -132,6 +132,13 @@ if ! mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || ! touch "$LOG_FILE" 2>/dev
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 fi
 
+# Basic log rotation — keep log under 50MB to prevent it growing unbounded on long runs
+LOG_MAX_BYTES=52428800  # 50MB
+if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+    mv "$LOG_FILE" "${LOG_FILE}.1" 2>/dev/null || true
+    : > "$LOG_FILE" 2>/dev/null || true
+fi
+
 log() {
     local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
     echo "$msg" >> "$LOG_FILE"
@@ -160,29 +167,44 @@ sleep 15
 log "=== Starting $REMOTE_NAME sync to $DOWNLOADS_DIR ==="
 mkdir -p "$DOWNLOADS_DIR"
 
-# Checkpointing & Resilience Flags:
-# - Sequential transfer (--transfers 1): Commits exactly 1 file at a time. Once a file finishes, 
-#   it is permanently locked in. If the connection drops, it resumes from the next file (Checkpointing).
-# - Size ordering (--order-by size,asc): Finishes smaller files first so they are immediately preserved.
-# - Pre-flight check (--check-first): Fast-skips all completed files in memory before queueing.
-# - Multi-stream chunks (--multi-thread-streams 4): Utilizes concurrent HTTP Range requests to open 
-#   4 parallel streams per file, forcing carriers to allocate maximum bandwidth (saturates gigabit/5G).
-# - Deep retries (--retries 10, --low-level-retries 20): Automatically recovers from network drops.
+# Resilience flags tuned for long, sustained downloads over metered/cellular links:
+#
+# --timeout 0            : Disables the IO idle timeout entirely. The default (5m) kills any
+#                          transfer if no bytes move for that duration — fatal for a cellular link
+#                          that may pause during band-switching or congestion. Set to 0 = disabled.
+#
+# --contimeout 2m        : Max time to establish the initial TCP connection (not data flow).
+#
+# --retries 50           : Number of times to retry a failed transfer before giving up on that file.
+#                          For a multi-hour download, 10 (the old default) exhausts in minutes.
+#
+# --retries-sleep 30s    : Wait 30s between each retry, giving cellular modems time to
+#                          re-establish a connection before attempting again (was 5s).
+#
+# --low-level-retries 30 : Retries at the HTTP chunk level (below the file level).
+#
+# --ignore-errors        : If a single file permanently fails after all retries, skip it and
+#                          continue downloading the rest of the queue instead of aborting.
+#
+# --size-only            : Skip files whose local byte count already matches the remote.
+#                          Avoids re-downloading completed files without needing a checksum request.
+#
+# --transfers 1          : One file at a time (checkpointing). Once a file is complete, it is
+#                          permanently safe. The download resumes from the next file on restart.
 SYNC_TRANSFERS="${SYNC_TRANSFERS:-1}"
 SYNC_STREAMS="${SYNC_STREAMS:-4}"
-SYNC_RETRIES="${SYNC_RETRIES:-10}"
-SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
+SYNC_RETRIES="${SYNC_RETRIES:-50}"
+SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-30}"
 
-# Core flags supported universally across all rclone versions
-# - --size-only: Skips files with matching byte size, bypassing unreliable cloud modtimes & missing checksums.
 RCLONE_RESILIENCE_FLAGS=(
     --size-only
+    --ignore-errors
     --transfers "$SYNC_TRANSFERS"
     --retries "$SYNC_RETRIES"
-    --retries-sleep 5s
+    --retries-sleep 30s
     --low-level-retries "$SYNC_LOW_LEVEL_RETRIES"
-    --timeout 15m
-    --contimeout 60s
+    --timeout 0
+    --contimeout 2m
 )
 
 # Dynamically add advanced flags if supported by installed rclone version
@@ -192,6 +214,10 @@ if echo "$RCLONE_HELP" | grep -q -- '--order-by'; then
 fi
 if echo "$RCLONE_HELP" | grep -q -- '--multi-thread-streams'; then
     RCLONE_RESILIENCE_FLAGS+=(--multi-thread-streams "$SYNC_STREAMS")
+fi
+if echo "$RCLONE_HELP" | grep -q -- '--max-backoff'; then
+    # Cap exponential retry backoff at 5 minutes to avoid waiting 30+ minutes between retries
+    RCLONE_RESILIENCE_FLAGS+=(--max-backoff 5m)
 fi
 
 # NOTE: No pre-sync rclone lsf call here — that would open a second TCP connection to the remote,
@@ -204,11 +230,11 @@ if command -v rclone >/dev/null 2>&1; then
     if [ -t 1 ]; then
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            --progress -v --stats 15s --log-file="$LOG_FILE"
+            --progress -v --stats 1m --log-file="$LOG_FILE"
     else
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
-            -v --stats 15s --log-file="$LOG_FILE"
+            -v --stats 1m --log-file="$LOG_FILE"
     fi
 else
     log "Error: rclone not found in PATH. Skipping remote copy."
