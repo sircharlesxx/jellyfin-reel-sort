@@ -4,6 +4,8 @@ import time
 import random
 import shutil
 import glob
+import re
+import subprocess
 from guessit import guessit
 
 # =============================================================================
@@ -109,6 +111,7 @@ SUBTITLE_PROVIDERS = os.environ.get("SUBTITLE_PROVIDERS", "")  # comma-separated
 SUBTITLE_DELAY = float(os.environ.get("SUBTITLE_DELAY", "2.0"))  # Seconds to wait between API calls to avoid rate limits
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "")  # Optional: e.g. http://localhost:8096 (auto-discovered if empty)
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")  # Optional API key for triggering library scan on import
+REMOTE_NAME = os.environ.get("REMOTE_NAME", "put.io")
 
 RESOLVED_PROVIDERS = None
 
@@ -404,7 +407,7 @@ def find_config_file():
     return None
 
 def load_config():
-    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY, JELLYFIN_URL, JELLYFIN_API_KEY
+    global DOWNLOADS_DIR, MEDIA_DIR, SHOWS_DIR, MOVIES_DIR, CLEANUP_MODE, ARCHIVE_DIR, DOWNLOAD_SUBTITLES, SUBTITLE_LANGUAGES, SUBTITLE_PROVIDERS, SUBTITLE_DELAY, JELLYFIN_URL, JELLYFIN_API_KEY, REMOTE_NAME
     cfg_file = find_config_file()
     if cfg_file and os.path.isfile(cfg_file):
         with open(cfg_file, "r") as f:
@@ -441,6 +444,8 @@ def load_config():
                         JELLYFIN_URL = val
                     elif key == "JELLYFIN_API_KEY" and not JELLYFIN_API_KEY:
                         JELLYFIN_API_KEY = val
+                    elif key == "REMOTE_NAME" and not REMOTE_NAME:
+                        REMOTE_NAME = val
 
     # Run lazy auto-discovery for storage paths
     resolve_paths()
@@ -886,6 +891,174 @@ def batch_fetch_subtitles(pending):
     return total_saved
 
 
+def normalize_title(t):
+    """Normalize a media title for robust comparison (strips punctuation and common articles)."""
+    if not t:
+        return ''
+    t = str(t).lower()
+    t = re.sub(r'\b(and|the|a|an)\b', '', t)
+    return re.sub(r'[^a-z0-9]', '', t)
+
+
+def build_library_index():
+    """Build an in-memory index of all existing shows and movies in Jellyfin library."""
+    load_config()
+    shows_index = {}   # (normalized_title, season_int, episode_int) -> filepath
+    movies_index = {}  # (normalized_title, year_int_or_none) -> filepath, and normalized_title -> filepath
+
+    # 1. Index TV Shows
+    if SHOWS_DIR and os.path.isdir(SHOWS_DIR):
+        for root, _, files in os.walk(SHOWS_DIR):
+            for f in files:
+                if f.lower().endswith(('.mkv', '.mp4', '.avi')):
+                    info = guessit(f)
+                    if 'title' in info and 'season' in info and 'episode' in info:
+                        nt = normalize_title(info['title'])
+                        s = info['season'][0] if isinstance(info['season'], list) else info['season']
+                        e = info['episode'][0] if isinstance(info['episode'], list) else info['episode']
+                        try:
+                            shows_index[(nt, int(s), int(e))] = os.path.join(root, f)
+                        except (ValueError, TypeError):
+                            pass
+
+    # 2. Index Movies
+    if MOVIES_DIR and os.path.isdir(MOVIES_DIR):
+        for root, _, files in os.walk(MOVIES_DIR):
+            for f in files:
+                if f.lower().endswith(('.mkv', '.mp4', '.avi')):
+                    info = guessit(f)
+                    if 'title' in info and info.get('type') == 'movie':
+                        nt = normalize_title(info['title'])
+                        yr = None
+                        if 'year' in info and str(info['year']).isdigit():
+                            yr = int(info['year'])
+                        full_p = os.path.join(root, f)
+                        if yr:
+                            movies_index[(nt, yr)] = full_p
+                        movies_index[nt] = full_p
+
+    return shows_index, movies_index
+
+
+def find_existing_library_match(rel_path, shows_index, movies_index):
+    """Check if a remote relative file path matches an existing item in the Jellyfin library."""
+    filename = os.path.basename(rel_path)
+    info = guessit(filename)
+    if 'title' not in info or ('season' not in info and 'episode' not in info and info.get('type') != 'movie'):
+        rel_info = guessit(rel_path)
+        if 'title' in rel_info:
+            info = rel_info
+
+    # TV SHOW
+    if 'title' in info and 'season' in info and 'episode' in info:
+        nt = normalize_title(info['title'])
+        s = info['season'][0] if isinstance(info['season'], list) else info['season']
+        e = info['episode'][0] if isinstance(info['episode'], list) else info['episode']
+        try:
+            key = (nt, int(s), int(e))
+            if key in shows_index:
+                return shows_index[key]
+        except (ValueError, TypeError):
+            pass
+
+    # MOVIE
+    elif 'title' in info and info.get('type') == 'movie':
+        nt = normalize_title(info['title'])
+        yr = None
+        if 'year' in info and str(info['year']).isdigit():
+            yr = int(info['year'])
+        if yr and (nt, yr) in movies_index:
+            return movies_index[(nt, yr)]
+        if nt in movies_index:
+            return movies_index[nt]
+
+    return None
+
+
+def pre_sync_check(exclude_file=None, remote_name=None):
+    """Scan remote files via rclone lsf and prevent re-downloading media already in Jellyfin."""
+    load_config()
+    remote = remote_name or REMOTE_NAME or os.environ.get("REMOTE_NAME", "put.io")
+
+    print(f"[*] Running smart pre-sync check on remote '{remote}:/'...")
+    try:
+        rclone_bin = shutil.which("rclone") or "rclone"
+        res = subprocess.run(
+            [rclone_bin, "lsf", f"{remote}:/", "--recursive", "--files-only"],
+            capture_output=True, text=True, timeout=45
+        )
+        if res.returncode != 0:
+            print(f"  [!] Notice: rclone lsf returned code {res.returncode}. Skipping pre-sync filter.")
+            return 0
+        remote_files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+    except Exception as e:
+        print(f"  [!] Notice: Pre-sync rclone check skipped: {e}")
+        return 0
+
+    if not remote_files:
+        print("  [i] No files detected on remote.")
+        return 0
+
+    video_exts = ('.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.wmv')
+    print(f"[*] Indexing Jellyfin library to match against {len(remote_files)} remote file(s)...")
+    shows_index, movies_index = build_library_index()
+
+    excluded_entries = []
+    restored_hardlinks = 0
+
+    for rel_path in remote_files:
+        if not rel_path.lower().endswith(video_exts):
+            continue
+
+        filename = os.path.basename(rel_path)
+        if filename.startswith('.') or filename.endswith(('.partial', '.crdownload', '.tmp', '.part')):
+            continue
+
+        local_dl_path = os.path.join(DOWNLOADS_DIR, rel_path) if DOWNLOADS_DIR else None
+        already_in_downloads = local_dl_path and os.path.isfile(local_dl_path) and os.path.getsize(local_dl_path) > 1024 * 1024
+
+        existing_match = find_existing_library_match(rel_path, shows_index, movies_index)
+        if existing_match:
+            clean_rel = rel_path.replace("\\", "/")
+            esc_path = clean_rel.replace("[", "\\[").replace("]", "\\]")
+            esc_base = filename.replace("[", "\\[").replace("]", "\\]")
+
+            excluded_entries.append(f"/{esc_path}")
+            if esc_base != esc_path:
+                excluded_entries.append(f"/{esc_base}")
+
+            print(f"  [✓] Skipping remote file (already in Jellyfin library): {clean_rel} -> {os.path.basename(existing_match)}")
+
+            # Reconstruct hardlink into downloads folder if missing
+            if local_dl_path and not already_in_downloads:
+                try:
+                    os.makedirs(os.path.dirname(local_dl_path), exist_ok=True)
+                    if not os.path.exists(local_dl_path):
+                        os.link(existing_match, local_dl_path)
+                        restored_hardlinks += 1
+                except Exception:
+                    pass
+
+    if excluded_entries:
+        unique_excludes = list(dict.fromkeys(excluded_entries))
+        print(f"[+] Smart pre-sync: Found {len(unique_excludes)} already-existing item(s) to skip.")
+        if restored_hardlinks > 0:
+            print(f"[+] Smart pre-sync: Reconstructed {restored_hardlinks} zero-space hardlink(s) in downloads folder.")
+
+        if exclude_file:
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(exclude_file)), exist_ok=True)
+                with open(exclude_file, "w", encoding="utf-8") as f:
+                    for entry in unique_excludes:
+                        f.write(f"{entry}\n")
+            except Exception as e:
+                print(f"  [!] Warning: Failed to write exclude file: {e}")
+    else:
+        print("[+] Smart pre-sync: No duplicate media detected. All remote files are new.")
+
+    return len(excluded_entries)
+
+
 def process_files(target=None):
     load_config()
     print(f"[+] Ingest downloads directory: {DOWNLOADS_DIR}")
@@ -1112,6 +1285,11 @@ def process_files(target=None):
         print("\n[+] Sort summary: No new media or subtitles added.")
 
 if __name__ == "__main__":
-    target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
-    process_files(target=target)
+    if len(sys.argv) > 1 and sys.argv[1] == "--pre-sync":
+        ex_file = sys.argv[2] if len(sys.argv) > 2 else None
+        rem_name = sys.argv[3] if len(sys.argv) > 3 else None
+        pre_sync_check(exclude_file=ex_file, remote_name=rem_name)
+    else:
+        target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+        process_files(target=target)
 

@@ -168,7 +168,9 @@ SYNC_RETRIES="${SYNC_RETRIES:-10}"
 SYNC_LOW_LEVEL_RETRIES="${SYNC_LOW_LEVEL_RETRIES:-20}"
 
 # Core flags supported universally across all rclone versions
+# - --size-only: Skips files with matching byte size, bypassing unreliable cloud modtimes & missing checksums.
 RCLONE_RESILIENCE_FLAGS=(
+    --size-only
     --transfers "$SYNC_TRANSFERS"
     --retries "$SYNC_RETRIES"
     --retries-sleep 5s
@@ -186,6 +188,23 @@ if echo "$RCLONE_HELP" | grep -q -- '--multi-thread-streams'; then
     RCLONE_RESILIENCE_FLAGS+=(--multi-thread-streams "$SYNC_STREAMS")
 fi
 
+# Pre-sync library check: identify media that already exists in Jellyfin library and exclude from re-downloading
+EXCLUDE_FILE="/tmp/jellyfin_reel_sort_exclude.txt"
+rm -f "$EXCLUDE_FILE" 2>/dev/null || true
+
+if [ -f "$SORTER_SCRIPT" ] && command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    log "=== Checking Jellyfin library for existing media ==="
+    if [ -t 1 ]; then
+        "$PYTHON_BIN" "$SORTER_SCRIPT" --pre-sync "$EXCLUDE_FILE" "$REMOTE_NAME" 2>&1 | tee -a "$LOG_FILE"
+    else
+        "$PYTHON_BIN" "$SORTER_SCRIPT" --pre-sync "$EXCLUDE_FILE" "$REMOTE_NAME" >> "$LOG_FILE" 2>&1
+    fi
+fi
+
+if [ -s "$EXCLUDE_FILE" ]; then
+    RCLONE_RESILIENCE_FLAGS+=(--exclude-from "$EXCLUDE_FILE")
+fi
+
 if command -v rclone >/dev/null 2>&1; then
     if [ -t 1 ]; then
         rclone copy "$REMOTE_NAME:/" "$DOWNLOADS_DIR" \
@@ -196,6 +215,7 @@ if command -v rclone >/dev/null 2>&1; then
             "${RCLONE_RESILIENCE_FLAGS[@]}" \
             -v --stats 15s --log-file="$LOG_FILE"
     fi
+    rm -f "$EXCLUDE_FILE" 2>/dev/null || true
 else
     log "Error: rclone not found in PATH. Skipping remote copy."
 fi

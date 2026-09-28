@@ -162,7 +162,24 @@ download_and_sort() {
     echo -e "${BOLD}${CYAN}------------------------------------------------------${RESET}"
     echo ""
 
+    if [ -f "$dest_file" ]; then
+        local local_size
+        local_size=$(stat -c%s "$dest_file" 2>/dev/null || echo 0)
+        if [ "$local_size" -gt 1048576 ]; then
+            echo -e "${YELLOW}[!] File already exists locally in downloads: $dest_file (${local_size} bytes)${RESET}"
+            read -r -p "Re-download anyway? [y/N]: " redl_choice
+            if [[ ! "$redl_choice" =~ ^[Yy]$ ]]; then
+                echo -e "${GREEN}✓ Skipping download. Proceeding directly to sorting/linking...${RESET}"
+                "$PY_CMD" "$SORTER_SCRIPT" "$dest_file"
+                echo ""
+                read -r -p "Press Enter to return to menu..." _
+                return
+            fi
+        fi
+    fi
+
     local -a dl_flags=(
+        --size-only
         --progress
         --transfers "$CONCURRENCY"
         --checkers "$CONCURRENCY"
