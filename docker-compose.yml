@@ -46,11 +46,10 @@ services:
     restart: unless-stopped
 
     # ── User ──────────────────────────────────────────────────────────────────
-    # Run as the same user who owns ~/Jellyfin/downloads and ~/media/.
-    # This is mandatory: all three directory trees (config, media, downloads)
-    # must share a UID/GID so that hardlinks and permissions work correctly.
-    # Set PUID and PGID in your .env file (run "id <youruser>" to find them).
-    user: "${PUID:-1000}:${PGID:-1000}"
+    # Run as the same user who owns the media and config directories.
+    # On this system the cron runs as root, so all directories are root-owned.
+    # PUID=0 / PGID=0 means root. Change in .env if your dirs are user-owned.
+    user: "${PUID:-0}:${PGID:-0}"
 
     # ── Timezone ──────────────────────────────────────────────────────────────
     environment:
