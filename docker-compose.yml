@@ -1,0 +1,108 @@
+# ==============================================================================
+# Jellyfin Reel Sort — Docker Compose
+#
+# Brings up a Jellyfin server that:
+#   - Reads your organized media from ~/media/Movies and ~/media/Shows
+#   - Uses Intel QuickSync (VAAPI) for hardware transcoding
+#   - Runs as YOUR user so hardlinks between ~/Jellyfin/downloads and
+#     ~/media/ are fully preserved (they share the same filesystem inode)
+#   - Persists all Jellyfin config and metadata in ~/Jellyfin/config
+#
+# QUICK START
+# -----------
+#   1. Copy .env.example to .env and fill in your UID, GID, and timezone:
+#        cp .env.example .env && nano .env
+#
+#   2. Start Jellyfin:
+#        docker compose up -d
+#
+#   3. Open http://<your-nas-ip>:8096 and follow the setup wizard.
+#      When asked to add media libraries, use:
+#        TV Shows → /media/Shows
+#        Movies   → /media/Movies
+#
+#   4. Enable Intel QuickSync in Jellyfin:
+#        Dashboard → Playback → Transcoding
+#        Hardware acceleration: Video Acceleration API (VAAPI)
+#        VAApi Device: /dev/dri/renderD128
+#        ✅ Enable hardware encoding
+#
+# HOST PRE-REQUISITES
+# -------------------
+# Intel QuickSync requires the VAAPI driver on the HOST:
+#   Ubuntu/Debian:  sudo apt install intel-media-va-driver-non-free
+#   Verify:         ls -la /dev/dri/
+#
+# Find your user's UID/GID for the .env file:
+#   id mariofishy
+# ==============================================================================
+
+name: jellyfin-reel-sort
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+
+    # ── User ──────────────────────────────────────────────────────────────────
+    # Run as the same user who owns ~/Jellyfin/downloads and ~/media/.
+    # This is mandatory: all three directory trees (config, media, downloads)
+    # must share a UID/GID so that hardlinks and permissions work correctly.
+    # Set PUID and PGID in your .env file (run "id <youruser>" to find them).
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    # ── Timezone ──────────────────────────────────────────────────────────────
+    environment:
+      - TZ=${TZ:-America/Chicago}
+
+    # ── Volumes ───────────────────────────────────────────────────────────────
+    # All paths below reference the HOST machine.
+    # IMPORTANT: ~/Jellyfin/downloads and ~/media MUST be on the same
+    # filesystem partition for hardlinks to work. Do not put them on
+    # separate drives or mount points.
+    volumes:
+      # Jellyfin application data: database, metadata, user accounts, settings.
+      # Back this up if you want to preserve your library metadata.
+      - ${JELLYFIN_CONFIG:-/home/mariofishy/Jellyfin/config}:/config
+
+      # Jellyfin cache: transcoded segments, image thumbnails, subtitle cache.
+      # Safe to delete — Jellyfin regenerates it automatically.
+      - ${JELLYFIN_CACHE:-/home/mariofishy/Jellyfin/cache}:/cache
+
+      # Organized media library. Jellyfin scans this read-only.
+      # sorter.py hardlinks files INTO here from ~/Jellyfin/downloads.
+      # Both trees live on the same partition — hardlinks are fully preserved.
+      - ${MEDIA_DIR:-/home/mariofishy/media}:/media:ro
+
+    # ── Intel QuickSync / VAAPI ───────────────────────────────────────────────
+    # Exposes the GPU render device to the container.
+    # renderD128 is the primary Intel integrated GPU render node.
+    # If you have multiple GPUs or a different node, list them explicitly:
+    #   devices:
+    #     - /dev/dri/renderD128:/dev/dri/renderD128
+    devices:
+      - /dev/dri:/dev/dri
+
+    # Add the container process to the host render group so it can
+    # open /dev/dri/renderD128 without running as root.
+    # If Jellyfin logs "Permission denied" on the render device, find your
+    # render group GID with:  stat -c %G /dev/dri/renderD128
+    # and replace "render" below with that number (e.g. "105").
+    group_add:
+      - render
+
+    # ── Network / Ports ───────────────────────────────────────────────────────
+    ports:
+      - "8096:8096"       # Jellyfin HTTP web UI and API
+      - "8920:8920"       # Jellyfin HTTPS (configure a cert in Dashboard → Networking)
+      - "1900:1900/udp"   # DLNA / SSDP service discovery (smart TVs, UPnP)
+      - "7359:7359/udp"   # Jellyfin client auto-discovery
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8096/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

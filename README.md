@@ -105,6 +105,99 @@ Our smart installer will automatically find your media folders, configure your c
 
 ---
 
+## 🐳 Docker Compose Setup (Recommended)
+
+The included [`docker-compose.yml`](docker-compose.yml) starts a fully configured Jellyfin server with Intel QuickSync hardware transcoding.
+
+### 1. Set your environment
+
+```bash
+cd jellyfin-reel-sort
+cp .env.example .env
+nano .env
+```
+
+Fill in your user's UID, GID, and timezone:
+
+```bash
+# Find your UID and GID
+id mariofishy
+# → uid=1000(mariofishy) gid=1000(mariofishy) ...
+```
+
+### 2. Install the Intel QuickSync VAAPI driver on the host
+
+Without this, Jellyfin cannot use the GPU for transcoding:
+
+```bash
+# Ubuntu / Debian
+sudo apt install intel-media-va-driver-non-free
+
+# Verify the render device exists
+ls -la /dev/dri/
+# → You should see renderD128 (and card0)
+```
+
+### 3. Start Jellyfin
+
+```bash
+docker compose up -d
+```
+
+Open **http://\<your-nas-ip\>:8096** and follow the setup wizard.
+
+### 4. Add your media libraries
+
+When prompted to add libraries, use these container-internal paths:
+
+| Library type | Path |
+|:---|:---|
+| TV Shows | `/media/Shows` |
+| Movies | `/media/Movies` |
+
+### 5. Enable Intel QuickSync in Jellyfin
+
+Go to **Dashboard → Playback → Transcoding**:
+
+- Hardware acceleration: **Video Acceleration API (VAAPI)**
+- VAApi Device: `/dev/dri/renderD128`
+- ✅ Enable hardware encoding
+
+### Directory layout expected by Docker Compose
+
+```text
+~/media/                    ← mounted as /media (read-only inside container)
+  ├── Movies/
+  │     └── My Movie (2024)/
+  └── Shows/
+        └── My Show/
+
+~/Jellyfin/
+  ├── config/               ← Jellyfin database & settings (persistent)
+  ├── cache/                ← Thumbnails & transcode cache (safe to delete)
+  └── downloads/            ← Raw cloud downloads (sorter.py hardlinks to ~/media)
+```
+
+> **Why `~/media` and `~/Jellyfin/downloads` must stay on the same partition:**
+> Hardlinks work at the filesystem block level. The sorter.py script creates a hardlink from a file in `downloads/` into `media/` — which means both paths point to the **same physical data on disk** with zero duplication. If they were on different partitions, hardlinks would be impossible and you'd need 2× disk space.
+
+### Render group permission errors?
+
+If Jellyfin logs `Permission denied opening /dev/dri/renderD128`, find your render group GID and set it explicitly:
+
+```bash
+stat -c %G /dev/dri/renderD128
+# → e.g. 105
+```
+
+Edit `docker-compose.yml` and change:
+```yaml
+group_add:
+  - "105"   # replace "render" with your actual GID
+```
+
+---
+
 ## 📖 Everyday Cheat Sheet
 
 Here are the most common things you might want to do:
