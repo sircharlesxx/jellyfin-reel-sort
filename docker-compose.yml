@@ -70,10 +70,12 @@ services:
       # Safe to delete — Jellyfin regenerates it automatically.
       - ${JELLYFIN_CACHE:-/home/mariofishy/Jellyfin/cache}:/cache
 
-      # Organized media library. Jellyfin scans this read-only.
+      # Organized media library. Jellyfin reads and writes here.
+      # Write access is required for subtitle plugins (OpenSubtitles, etc.) which
+      # save .srt/.ass files directly alongside video files in this directory.
       # sorter.py hardlinks files INTO here from ~/Jellyfin/downloads.
       # Both trees live on the same partition — hardlinks are fully preserved.
-      - ${MEDIA_DIR:-/home/mariofishy/media}:/media:ro
+      - ${MEDIA_DIR:-/home/mariofishy/media}:/media
 
     # ── Intel QuickSync / VAAPI ───────────────────────────────────────────────
     # Exposes the GPU render device to the container.
