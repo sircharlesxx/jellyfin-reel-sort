@@ -87,11 +87,12 @@ services:
 
     # Add the container process to the host render group so it can
     # open /dev/dri/renderD128 without running as root.
-    # If Jellyfin logs "Permission denied" on the render device, find your
-    # render group GID with:  stat -c %G /dev/dri/renderD128
-    # and replace "render" below with that number (e.g. "105").
+    # Must use the NUMERIC GID — Docker looks up group names in the CONTAINER's
+    # /etc/group, not the host's. The Jellyfin image has no "render" entry.
+    # Find your render GID on the host with: grep render /etc/group
+    # Then set RENDER_GID in your .env file.
     group_add:
-      - render
+      - "${RENDER_GID:-105}"
 
     # ── Network / Ports ───────────────────────────────────────────────────────
     ports:
