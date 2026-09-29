@@ -91,17 +91,122 @@ Once installed, these easy commands are available to use from anywhere on your s
 
 ---
 
-## 🏃‍♂️ Quick Installation
+## 🏃‍♂️ Fresh Installation (Start Here)
 
-Ready to get started? Run this on your NAS or Linux server:
+Run these steps once on your NAS or Linux server to get everything set up from scratch.
+
+### Step 1 — Clone the repo
 
 ```bash
+cd /home/mariofishy
 git clone https://github.com/sircharlesxx/jellyfin-reel-sort.git
 cd jellyfin-reel-sort
-./install.sh
 ```
 
-Our smart installer will automatically find your media folders, configure your cloud connection, and set everything up for you!
+Everything lives in this folder. Future updates are just `git pull` from inside it.
+
+### Step 2 — Configure your environment
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Fill in your values:
+
+```bash
+# Find your UID and GID
+id mariofishy
+# → uid=1000(mariofishy) gid=1000(mariofishy)
+```
+
+```env
+PUID=1000          # your UID from above
+PGID=1000          # your GID from above
+TZ=America/Chicago # your timezone
+```
+
+Leave the path variables as-is unless your layout differs from the defaults.
+
+### Step 3 — Install the Intel QuickSync driver
+
+Required for hardware transcoding. Skip if you don't have an Intel CPU/iGPU.
+
+```bash
+sudo apt install intel-media-va-driver-non-free
+
+# Confirm the render device exists
+ls -la /dev/dri/
+# You should see: renderD128
+```
+
+### Step 4 — Start Jellyfin
+
+```bash
+docker compose up -d
+```
+
+Jellyfin is now running. Open **http://\<your-nas-ip\>:8096** in a browser.
+
+### Step 5 — Complete the Jellyfin setup wizard
+
+When the wizard asks to add media libraries, use these paths:
+
+| Library | Path to add |
+|:---|:---|
+| Movies | `/media/Movies` |
+| TV Shows | `/media/Shows` |
+
+### Step 6 — Enable Intel QuickSync in Jellyfin
+
+Go to **Dashboard → Playback → Transcoding**:
+- Hardware acceleration: **Video Acceleration API (VAAPI)**
+- VAApi Device: `/dev/dri/renderD128`
+- ✅ Check "Enable hardware encoding"
+- Save
+
+### Step 7 — Set up the auto-sync cron job
+
+This runs the cloud sync every 5 minutes automatically. Run as root:
+
+```bash
+sudo crontab -e
+```
+
+Add this line at the bottom:
+
+```cron
+*/5 * * * * /home/mariofishy/jellyfin-reel-sort/putsync.sh >/dev/null 2>&1
+```
+
+### Step 8 — Configure rclone for your cloud storage
+
+```bash
+rclone config
+```
+
+Follow the prompts to connect your cloud remote. The default remote name expected by this project is `put.io` — if yours is different, add `REMOTE_NAME=yourremotename` to your config file at `~/.config/jellyfin-reel-sort.conf`.
+
+### Step 9 — Grab your Jellyfin API key (optional but recommended)
+
+An API key allows the sync script to automatically trigger a Jellyfin library scan after each download.
+
+1. Go to **Dashboard → API Keys** → **+**
+2. Name it anything (e.g. `putsync`)
+3. Copy the key and add it to `~/.config/jellyfin-reel-sort.conf`:
+
+```bash
+echo 'JELLYFIN_API_KEY="your-key-here"' >> ~/.config/jellyfin-reel-sort.conf
+```
+
+### Updating in the future
+
+```bash
+cd /home/mariofishy/jellyfin-reel-sort
+git pull
+```
+
+That's it. The cron always runs directly from this folder so updates take effect immediately.
 
 ---
 
